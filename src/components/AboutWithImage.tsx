@@ -17,7 +17,7 @@ const AboutWithImage: React.FC = () => (
       </div>
       <div className={styles.imageSectionInside}>
         <img
-          src="/The%20Creators%20Hub%20-%20SYGNO%20-%2001817-2.jpg"
+          src="/rickhoving.jpg"
           alt="Rick Hoving profile"
           className={styles.bigProfileImage}
         />

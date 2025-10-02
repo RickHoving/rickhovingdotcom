@@ -1,0 +1,16 @@
+.projects {
+  background: var(--section-bg);
+  border-radius: 0;
+  box-shadow: 0 2px 16px var(--section-border);
+  border: 1.5px solid var(--section-border);
+  color: var(--text-main);
+}
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 32px;
+  justify-content: center;
+}
+.cardLink {
+  color: inherit;
+}

@@ -1,0 +1,38 @@
+:root {
+  --background: #f7f7fa;
+  --foreground: #23272e;
+  --primary: #3584e4;
+  --secondary: #31343b;
+  --section-bg: #fff;
+  --section-border: #e0e7ef;
+  --text-main: #23272e;
+  --text-muted: #6c7380;
+  --theme-switch-bg: #fff;
+  --theme-switch-fg: #3584e4;
+  --theme-switch-border: #e0e7ef;
+  --theme-switch-hover-bg: #3584e4;
+  --theme-switch-hover-fg: #fff;
+  --theme-switch-hover-border: #3584e4;
+}
+[data-theme='dark'] {
+  --background: #1e1e1e; /* VS Code editor background */
+  --foreground: #d4d4d4; /* VS Code editor foreground */
+  --primary: #3584e4;    /* VS Code blue accent */
+  --secondary: #252526;  /* VS Code sidebar background */
+  --section-bg: #1e1e1e; /* Section backgrounds match editor */
+  --section-border: #2c2c32; /* Subtle border */
+  --text-main: #d4d4d4;  /* Main text color */
+  --text-muted: #858585; /* Muted text color */
+  --theme-switch-bg: #252526;
+  --theme-switch-fg: #3584e4;
+  --theme-switch-border: #2c2c32;
+  --theme-switch-hover-bg: #3584e4;
+  --theme-switch-hover-fg: #1e1e1e;
+  --theme-switch-hover-border: #3584e4;
+}
+body {
+  background: var(--background);
+  color: var(--text-main);
+  font-family: 'Fira Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+  transition: background 0.2s, color 0.2s;
+}

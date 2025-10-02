@@ -1,0 +1,31 @@
+.contact {
+  background: var(--section-bg);
+  border-radius: 0;
+  box-shadow: 0 2px 16px var(--section-border);
+  border: 1.5px solid var(--section-border);
+  color: var(--text-main);
+  padding: 32px 32px 24px 32px;
+}
+.contact h2 {
+  color: var(--primary);
+}
+.contact p {
+  color: var(--text-muted);
+}
+.links {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  gap: 2rem;
+}
+.email, .linkedin {
+  color: var(--primary);
+  font-size: 1.1rem;
+  text-decoration: none;
+  font-weight: 600;
+  transition: color 0.2s;
+  font-family: 'Fira Mono', monospace;
+}
+.email:hover, .linkedin:hover {
+  color: var(--text-main);
+}

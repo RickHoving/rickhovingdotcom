@@ -1,0 +1,74 @@
+.aboutWithImage {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  justify-content: center;
+  margin: 2rem auto;
+  max-width: 1100px;
+  width: 100%;
+}
+.aboutWithImageBox {
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  width: 100%;
+  padding: 0;
+  background: var(--section-bg);
+  border-radius: 0;
+  box-shadow: 0 2px 16px var(--section-border);
+  border: 1.5px solid var(--section-border);
+  color: var(--text-main);
+  transition: background 0.2s, border 0.2s;
+}
+.aboutContent {
+  flex: 2;
+  padding: 2.5rem 2.5rem 2.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  text-align: left;
+  color: var(--text-main);
+  font-family: 'Fira Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+}
+.imageSectionInside {
+  flex: 1;
+  display: flex;
+  align-items: stretch;
+  justify-content: flex-end;
+}
+.bigProfileImage {
+  width: 100%;
+  height: 100%;
+  max-width: 320px;
+  object-fit: cover;
+  border-radius: 0;
+  border: 1.5px solid var(--section-border);
+  box-shadow: 0 2px 16px var(--section-border);
+  background: var(--background);
+}
+@media (max-width: 900px) {
+  .aboutWithImageBox {
+    flex-direction: column;
+  }
+  .aboutContent {
+    padding: 2rem 1rem;
+  }
+  .imageSectionInside {
+    justify-content: center;
+    margin-top: 1rem;
+  }
+  .bigProfileImage {
+    max-width: 100%;
+    max-height: 220px;
+    border-radius: 0;
+  }
+  .aboutWithImage {
+    flex-direction: column;
+    align-items: center;
+    gap: 1.5rem;
+  }
+  .bigProfileImage {
+    width: 180px;
+    height: 180px;
+  }
+}

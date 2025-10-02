@@ -1,0 +1,39 @@
+.summarySection {
+  background: var(--section-bg);
+  color: var(--text-main);
+  border-radius: 0;
+  box-shadow: 0 2px 16px var(--section-border);
+  border: 1.5px solid var(--section-border);
+  overflow-x: auto;
+  padding: 32px 32px 24px 32px;
+}
+.heading {
+  color: var(--primary);
+}
+.summaryGrid {
+  display: flex;
+  gap: 32px;
+  justify-content: center;
+}
+.summaryBlock {
+  background: var(--background);
+  border-radius: 0;
+  border: 1.5px solid var(--section-border);
+  box-shadow: 0 2px 8px var(--section-border);
+  padding: 24px 24px 16px 24px;
+  margin-bottom: 24px;
+}
+.summaryBlock h3 {
+  color: var(--primary);
+}
+.summaryBlock ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.summaryBlock li {
+  margin-bottom: 0.7rem;
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  letter-spacing: 0.2px;
+}

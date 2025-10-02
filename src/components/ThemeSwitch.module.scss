@@ -1,0 +1,24 @@
+.themeSwitch {
+  position: fixed;
+  top: 24px;
+  right: 32px;
+  z-index: 1000;
+  background: var(--theme-switch-bg, #23272e);
+  color: var(--theme-switch-fg, #4f8cff);
+  border: 1.5px solid var(--theme-switch-border, #31343b);
+  border-radius: 50%;
+  width: 44px;
+  height: 44px;
+  font-size: 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  transition: background 0.2s, color 0.2s, border 0.2s;
+}
+.themeSwitch:hover {
+  background: var(--theme-switch-hover-bg, #4f8cff);
+  color: var(--theme-switch-hover-fg, #fff);
+  border-color: var(--theme-switch-hover-border, #4f8cff);
+}

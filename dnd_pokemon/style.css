@@ -1,0 +1,16 @@
+* {
+	box-sizing: border-box;
+	margin: 0;
+	padding: 0;
+}
+
+body {
+	font-family: 'Segoe UI', sans-serif;
+	background: #1a1a2e;
+	color: #eee;
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+}
+
+/* ...existing CSS continues (truncated for brevity, full code copied)... */

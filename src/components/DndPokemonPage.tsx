@@ -5,7 +5,7 @@ const DndPokemonPage: React.FC = () => {
     <iframe
       src="/dnd_pokemon/index.html"
       title="D&D Pokémon"
-      style={{ width: '100%', height: '90vh', border: 'none', background: '#1a1a2e' }}
+      style={{ width: '100vw', height: '100vh', border: 'none', outline: 'none', background: '#1a1a2e', display: 'block' }}
       allowFullScreen
     />
   );

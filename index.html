@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <script>
       (function() {
-        var redirect = sessionStorage.redirect;
-        delete sessionStorage.redirect;
-        if (redirect && redirect !== location.href) {
-          history.replaceState(null, null, redirect);
+        var l = window.location;
+        if (l.search[1] === '/') {
+          var path = l.search.slice(1);
+          history.replaceState(null, null, path + (l.hash || ''));
         }
       })();
     </script>

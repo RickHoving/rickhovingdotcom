@@ -3,8 +3,11 @@
   <head>
     <meta charset="utf-8">
     <script>
-      sessionStorage.redirect = location.href;
+      var l = window.location;
+      l.replace(
+        l.protocol + '//' + l.hostname + (l.port ? ':' + l.port : '') +
+        '/?/' + l.pathname.slice(1) + l.search + l.hash
+      );
     </script>
-    <meta http-equiv="refresh" content="0;URL='/'">
   </head>
 </html>

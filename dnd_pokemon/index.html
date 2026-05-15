@@ -1,19 +1,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-	<meta charset="UTF-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>D&D Pokémon</title>
-	<link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>D&D Pokémon</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-	<nav class="tab-nav">
-		<button class="tab-btn active" data-tab="pokedex">Pokédex</button>
-		<button class="tab-btn" data-tab="party">Party</button>
-		<button class="tab-btn" data-tab="fight">Fight</button>
-		<button class="tab-btn" data-tab="rules">Rules</button>
-	</nav>
-	<!-- ...existing HTML content continues (truncated for brevity, full code copied)... -->
-	<script src="app.js"></script>
+
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="pokedex">Pokédex</button>
+    <button class="tab-btn" data-tab="party">Party</button>
+    <button class="tab-btn" data-tab="fight">Fight</button>
+    <button class="tab-btn" data-tab="rules">Rules</button>
+  </nav>
+
+  <!-- ── Pokédex ── -->
+  <div id="tab-pokedex" class="tab-pane active">
+    <h1>Pokédex</h1>
+    <p class="subtitle">Search for any Pokémon by name</p>
+
+    <div class="search-wrap">
+      <div class="search">
+        <input type="text" id="input" placeholder="e.g. pikachu, charizard…" autocomplete="off" />
+        <button id="btn">Search</button>
+      </div>
+      <ul id="autocomplete"></ul>
+    </div>
+
+    <p id="error"></p>
+
+    <div id="level-bar">
+      <label class="level-bar-label">Level</label>
+      <input type="number" id="level" min="1" max="99" value="1" />
+      <input type="range" id="level-range" min="1" max="99" value="1" />
+    </div>
+
+    <div id="card">
+      <div class="card-header">
+        <img id="sprite" src="" alt="" />
+        <div class="info">
+          <h2 id="name"></h2>
+          <div class="id" id="pokedex-id"></div>
+          <div class="types" id="types"></div>
+        </div>
+      </div>
+
+      <div class="stats">
+        <h3>Base Stats</h3>
+        <div id="stat-list"></div>
+      </div>
+
+      <hr class="divider" />
+
+      <div class="meta" id="meta"></div>
+
+      <hr class="divider" />
+
+      <div class="dnd-stats">
+        <h3>D&D Stats</h3>
+        <div id="dnd-computed"></div>
+      </div>
+    </div>
+
+    <div id="moves-container"></div>
+  </div>
+
+  <!-- ── Party ── -->
+  <div id="tab-party" class="tab-pane">
+    <h1>Party</h1>
+    <div id="party-grid" class="party-grid"></div>
+  </div>
+
+  <!-- ── Fight ── -->
+  <div id="tab-fight" class="tab-pane">
+
+    <section id="enemy-setup">
+      <h1>Fight</h1>
+      <h2 class="section-title">Enemy Party <span id="enemy-count">(0/5)</span></h2>
+
+      <div class="enemy-add-row">
+        <div class="enemy-search-wrap">
+          <input type="text" id="enemy-input" placeholder="Search Pokémon…" autocomplete="off" />
+          <ul id="enemy-autocomplete"></ul>
+        </div>
+        <input type="number" id="enemy-level-input" min="1" max="99" value="1" class="lv-inline" />
+        <button id="enemy-add-btn">Add</button>
+      </div>
+
+      <div id="enemy-list"></div>
+
+      <button id="start-fight-btn" class="btn-primary" disabled>&#9876; Start Fight</button>
+    </section>
+
+    <section id="initiative-screen" style="display:none">
+      <h1>Roll for Initiative!</h1>
+      <p class="subtitle">Determine the party's battle order</p>
+      <div id="initiative-list"></div>
+      <div class="fight-btn-row">
+        <button id="roll-initiative-btn" class="btn-secondary">Roll All</button>
+        <button id="to-matchups-btn" class="btn-primary">Set Matchups &#8594;</button>
+      </div>
+    </section>
+
+    <section id="matchup-screen" style="display:none">
+      <h1>Choose Opponents</h1>
+      <p class="subtitle">Pick an enemy for each party member</p>
+      <div id="matchup-assignment-list"></div>
+      <div class="fight-btn-row">
+        <button id="back-to-initiative-btn" class="btn-secondary">&#8592; Back</button>
+        <button id="confirm-matchups-btn" class="btn-primary" disabled>&#9876; Start Fight!</button>
+      </div>
+    </section>
+
+    <section id="fight-tracker" style="display:none">
+      <div class="fight-header">
+        <span class="fight-round-label">Round <strong id="fight-round">1</strong></span>
+        <button id="next-turn-btn" class="btn-primary">Next Round &#8594;</button>
+        <button id="end-fight-btn" class="btn-secondary">End Fight</button>
+      </div>
+      <div id="party-overview" class="party-overview-panel"></div>
+      <div id="fighters-list"></div>
+    </section>
+
+  </div>
+
+  <!-- ── Rules ── -->
+  <div id="tab-rules" class="tab-pane">
+    <h1>Combat Rules</h1>
+    <p class="subtitle">Custom D&amp;D formulas for Pokémon combat</p>
+
+    <div class="rules-content">
+
+      <div class="rules-section">
+        <h2>Hit Points</h2>
+        <div class="rules-formula">HP = base_hp + (level × 2)</div>
+        <p>Every Pokémon's max HP scales linearly with level. A level 5 Rattata (base HP 30) has <strong>40 HP</strong>.</p>
+      </div>
+
+      <div class="rules-section">
+        <h2>Armor Class</h2>
+        <div class="rules-formula">maxDef  = ⌊⌊2 × base_def + 99⌋ × 1.1⌋   (perfect EVs/IVs/+nature)
+AC      = round( (maxDef + level − 1) / 20 )</div>
+        <p>AC is derived from a Pokémon's base Defense stat, scaled to represent perfect defensive investment. AC grows slightly with level to reflect experience.</p>
+      </div>
+
+      <div class="rules-section">
+        <h2>To-Hit Bonus</h2>
+        <div class="rules-formula">divisor = 10  (levels  1–25)
+         =  9  (levels 26–50)
+         =  8  (levels 51–75)
+         =  7  (levels 76–99)
+
+hit bonus = round(move_accuracy / divisor)</div>
+        <p>Each move's accuracy becomes a flat <strong>+N to hit</strong> bonus. The divisor decreases at higher levels so attacks land more reliably as Pokémon grow stronger.</p>
+        <p>Moves with <em>no accuracy</em> (e.g. Swift) <strong>always hit</strong> automatically.</p>
+      </div>
+
+      <div class="rules-section">
+        <h2>Attack Roll</h2>
+        <div class="rules-formula">roll = d20 + hit_bonus   vs   opponent AC</div>
+        <ul>
+          <li>Roll equal to or above the opponent's AC → <strong>HIT</strong></li>
+          <li>Roll below the opponent's AC → <strong>MISS</strong></li>
+        </ul>
+        <p>Click any move in a fighter's move list during combat to instantly roll and see the result.</p>
+      </div>
+
+      <div class="rules-section">
+        <h2>Damage</h2>
+        <div class="rules-formula">damage = 1d8  (default)</div>
+        <p>On a hit, roll the damage die shown next to the move. The default damage die is <strong>1d8</strong> for all moves. The DM may adjust this based on move power or situation.</p>
+      </div>
+
+      <div class="rules-section">
+        <h2>Turn Order &amp; Rounds</h2>
+        <h3>Initiative</h3>
+        <p>At the start of combat each player rolls a d20 (or uses Roll All) to determine their initiative. Higher initiative goes first within matchups.</p>
+        <h3>Speed</h3>
+        <p>Within each matchup, the Pokémon with the higher Speed stat attacks first. Ties go to the party Pokémon.</p>
+        <h3>Rounds</h3>
+        <p>Each round all matchups resolve. Click <strong>Next Round</strong> to advance. Rounds are tracked in the header — use them to pace spells, status effects, or other time-based mechanics.</p>
+      </div>
+
+    </div>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>

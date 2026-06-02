@@ -57,6 +57,195 @@ const ENEMY_CONFIG = [
   { pokemon: 'growlithe', level: 4 },
 ];
 
+// ── Firebase Sync ─────────────────────────────────────────────────────────────
+// Replace these placeholder values with your Firebase project config.
+// Firebase Console → Project Settings → Your apps → SDK setup and configuration.
+// Note: these values are safe to commit — real security comes from Firestore Rules.
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyDhCbuNlJUy0BK7ItkfpOnCse03UcGtpyE",
+  authDomain: "orphans-and-pokemons.firebaseapp.com",
+  projectId: "orphans-and-pokemons",
+  storageBucket: "orphans-and-pokemons.firebasestorage.app",
+  messagingSenderId: "573058230512",
+  appId: "1:573058230512:web:e675f4080780b753c3ba35"
+};
+
+let db               = null;
+let isApplyingRemote = false;
+let partyDebounce    = null;
+let enemyDebounce    = null;
+
+function session() { return db?.collection('campaigns').doc('session'); }
+
+function saveParty() {
+  if (isApplyingRemote || !db) return;
+  const data = party.map(t => ({
+    player: t.player,
+    team:   t.team.map(m => ({ pokemon: m.pokemon, level: m.level })),
+  }));
+  session().set({ party: data }, { merge: true }).catch(console.error);
+}
+
+function saveEnemies() {
+  if (isApplyingRemote || !db) return;
+  const data = enemyGroups.map(g => ({
+    id:    g.id,
+    label: g.label,
+    team:  g.team.filter(t => t.data).map(t => ({ pokemon: t.data.name, level: t.level })),
+  }));
+  session().set({ enemies: data }, { merge: true }).catch(console.error);
+}
+
+function saveFightRound() {
+  if (!db) return;
+  session().set({ fightRound }, { merge: true }).catch(console.error);
+}
+
+function saveFightActive(active) {
+  if (!db) return;
+  session().set({ fightActive: active }, { merge: true }).catch(console.error);
+}
+
+function saveFighterHPs() {
+  if (isApplyingRemote || !db) return;
+  const hps = {};
+  [...partyFighters, ...Object.values(enemyFighters)].forEach(f => {
+    hps[f.id] = {
+      activeIdx: f.activeIdx,
+      team: f.team.map(t => ({ currentHP: t.currentHP, defeated: t.defeated })),
+    };
+  });
+  session().set({ fighterHPs: hps }, { merge: true }).catch(console.error);
+}
+
+async function applyRemoteParty(remoteParty) {
+  let changed = false;
+  for (let ti = 0; ti < Math.min(remoteParty.length, party.length); ti++) {
+    const remote = remoteParty[ti];
+    const local  = party[ti];
+
+    remote.team.forEach((rt, pi) => {
+      if (local.team[pi] && local.team[pi].level !== rt.level) {
+        local.team[pi].level = rt.level;
+        changed = true;
+      }
+    });
+
+    for (let pi = local.team.length; pi < remote.team.length; pi++) {
+      try {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${remote.team[pi].pokemon}`);
+        if (!res.ok) continue;
+        local.team.push({ pokemon: remote.team[pi].pokemon, level: remote.team[pi].level, data: await res.json() });
+        changed = true;
+      } catch (_) {}
+    }
+
+    if (remote.team.length < local.team.length) {
+      local.team.splice(remote.team.length);
+      if (local.activeIdx >= local.team.length) local.activeIdx = 0;
+      changed = true;
+    }
+  }
+  if (changed && document.getElementById('tab-party').classList.contains('active')) renderPartyTab();
+}
+
+async function applyRemoteEnemies(remoteData) {
+  if (!remoteData.length) return;
+
+  // Detect old flat format: [{ pokemon, level }] with no nested team
+  const isOldFormat = 'pokemon' in remoteData[0] && !('team' in remoteData[0]);
+
+  if (isOldFormat) {
+    const next = [];
+    for (const re of remoteData) {
+      const hit = enemyGroups[0]?.team.find(t => t.data?.name === re.pokemon && t.level === re.level);
+      if (hit) { next.push(hit); continue; }
+      try {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${re.pokemon}`);
+        if (!res.ok) continue;
+        next.push({ data: await res.json(), level: re.level });
+      } catch (_) {}
+    }
+    if (!enemyGroups.length) enemyGroups = [{ id: nextEnemyGroupId++, label: 'Enemy 1', team: next }];
+    else enemyGroups[0].team = next;
+    renderEnemyGroups();
+    updateStartFightBtn();
+    return;
+  }
+
+  // New format: [{ id, label, team: [{pokemon, level}] }]
+  const groupSig = g => `${g.id}:${g.label}:${g.team.map(t => `${t.data?.name}:${t.level}`).join(',')}`;
+  const next = [];
+  for (const rg of remoteData) {
+    const existing = enemyGroups.find(g => g.id === rg.id);
+    const newTeam  = [];
+    for (const rt of rg.team) {
+      const hit = existing?.team.find(t => t.data?.name === rt.pokemon && t.level === rt.level);
+      if (hit) { newTeam.push(hit); continue; }
+      try {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${rt.pokemon}`);
+        if (!res.ok) continue;
+        newTeam.push({ data: await res.json(), level: rt.level });
+      } catch (_) {}
+    }
+    next.push({ id: rg.id, label: rg.label, team: newTeam });
+  }
+  if (enemyGroups.map(groupSig).join('|') === next.map(groupSig).join('|')) return;
+  enemyGroups = next;
+  const maxId = Math.max(-1, ...enemyGroups.map(g => g.id));
+  if (maxId >= nextEnemyGroupId) nextEnemyGroupId = maxId + 1;
+  renderEnemyGroups();
+  updateStartFightBtn();
+}
+
+function applyRemoteFighterHPs(hps) {
+  if (!partyFighters.length) return;
+  [...partyFighters, ...Object.values(enemyFighters)].forEach(f => {
+    const remote = hps[f.id];
+    if (!remote) return;
+    if (remote.activeIdx !== f.activeIdx) f.activeIdx = remote.activeIdx;
+    remote.team.forEach((rt, i) => {
+      if (!f.team[i]) return;
+      if (f.team[i].currentHP === rt.currentHP && f.team[i].defeated === rt.defeated) return;
+      f.team[i].currentHP = rt.currentHP;
+      f.team[i].defeated  = rt.defeated;
+      updateFighterHPDisplay(f.id);
+    });
+  });
+}
+
+function listenToSession() {
+  session().onSnapshot(async snap => {
+    if (!snap.exists) return;
+    const data = snap.data();
+    isApplyingRemote = true;
+    try {
+      if (data.party)   await applyRemoteParty(data.party);
+      if (data.enemies) await applyRemoteEnemies(data.enemies);
+      if (data.fightRound !== undefined && data.fightRound !== fightRound) {
+        fightRound = data.fightRound;
+        if (fightTracker.style.display !== 'none') fightRoundEl.textContent = fightRound;
+      }
+      if (data.fighterHPs && fightTracker.style.display !== 'none') {
+        applyRemoteFighterHPs(data.fighterHPs);
+      }
+    } finally {
+      isApplyingRemote = false;
+    }
+  });
+}
+
+function initFirebase() {
+  try {
+    firebase.initializeApp(FIREBASE_CONFIG);
+    firebase.auth().signInAnonymously()
+      .then(() => { db = firebase.firestore(); listenToSession(); })
+      .catch(err => console.error('Firebase sign-in failed:', err));
+  } catch (err) {
+    console.error('Firebase init failed:', err);
+  }
+}
+
 // ── D&D Formulas ─────────────────────────────────────────────────────────────
 
 function calcHP(baseHp, level) { return baseHp + level * 2; }
@@ -284,13 +473,14 @@ let party = PARTY_CONFIG.map(c => ({
 }));
 let partyLoaded = false;
 
-// Enemies (pool built in setup, converted to a team trainer at fight start)
-let enemies = [];
-let nextEnemyId = 0;
+// Enemies: N trainers each with their own pokemon team
+let enemyGroups    = [];
+let nextEnemyGroupId = 0;
 
 // Fight
 let partyFighters = [];
-let enemyTrainer  = null; // single enemy trainer with a team (built from enemies pool)
+let enemyFighters = {}; // { [groupId]: fighterObj } — one per matched enemy group
+let matchups      = []; // [{ partyFighterId, enemyGroupId }]
 let fightRound    = 1;
 
 // Pokédex
@@ -435,13 +625,15 @@ async function initParty() {
   ]);
 
   allTeamSlots.forEach((t, i) => { t.data = allDatas[i]; });
+  const defaultGroup = { id: nextEnemyGroupId++, label: 'Enemy 1', team: [] };
   ENEMY_CONFIG.forEach((cfg, i) => {
-    if (enemyDatas[i]) enemies.push({ id: nextEnemyId++, data: enemyDatas[i], level: cfg.level });
+    if (enemyDatas[i]) defaultGroup.team.push({ data: enemyDatas[i], level: cfg.level });
   });
+  if (defaultGroup.team.length) enemyGroups.push(defaultGroup);
 
   partyLoaded = true;
   updateStartFightBtn();
-  renderEnemyList();
+  renderEnemyGroups();
   if (document.getElementById('tab-party').classList.contains('active')) renderPartyTab();
 }
 
@@ -515,6 +707,8 @@ partyGrid.addEventListener('input', e => {
   if (isNaN(lv) || lv < 1) lv = 1;
   if (lv > 99) lv = 99;
   party[ti].team[pi].level = lv;
+  clearTimeout(partyDebounce);
+  partyDebounce = setTimeout(saveParty, 800);
 });
 
 partyGrid.addEventListener('click', async e => {
@@ -527,6 +721,7 @@ partyGrid.addEventListener('click', async e => {
     party[ti].team.splice(pi, 1);
     if (party[ti].activeIdx >= party[ti].team.length) party[ti].activeIdx = 0;
     renderPartyTab();
+    saveParty();
     return;
   }
 
@@ -548,6 +743,7 @@ partyGrid.addEventListener('click', async e => {
       const data = await res.json();
       party[ti].team.push({ pokemon: name, level: lv, data });
       renderPartyTab();
+      saveParty();
     } catch (_) {
       addBtn.disabled = false;
       addBtn.textContent = 'Add';
@@ -555,116 +751,191 @@ partyGrid.addEventListener('click', async e => {
   }
 });
 
-// ── Fight Tab — Enemy Setup ──────────────────────────────────────────────────
+// ── Fight Tab — Enemy Groups Setup ───────────────────────────────────────────
 
-const enemyInput      = document.getElementById('enemy-input');
-const enemyAcList     = document.getElementById('enemy-autocomplete');
-const enemyLevelInput = document.getElementById('enemy-level-input');
-const enemyAddBtn     = document.getElementById('enemy-add-btn');
-const enemyListEl     = document.getElementById('enemy-list');
-const startFightBtn   = document.getElementById('start-fight-btn');
+const enemyGroupsList  = document.getElementById('enemy-groups-list');
+const addEnemyGroupBtn = document.getElementById('add-enemy-group-btn');
+const startFightBtn    = document.getElementById('start-fight-btn');
 
-makeAutocomplete(enemyInput, enemyAcList, document.querySelector('.enemy-search-wrap'), () => {});
+addEnemyGroupBtn.addEventListener('click', () => {
+  const id = nextEnemyGroupId++;
+  enemyGroups.push({ id, label: `Enemy ${id + 1}`, team: [] });
+  renderEnemyGroups();
+});
 
-enemyAddBtn.addEventListener('click', addEnemy);
-enemyInput.addEventListener('keydown', e => { if (e.key === 'Enter') addEnemy(); });
-
-async function addEnemy() {
-  const name = enemyInput.value.trim().toLowerCase();
-  if (!name || enemies.length >= 5) return;
-  let lv = parseInt(enemyLevelInput.value, 10);
-  if (isNaN(lv) || lv < 1) lv = 1;
-  if (lv > 99) lv = 99;
-  enemyAddBtn.disabled = true;
-  enemyAddBtn.textContent = '…';
-  try {
-    const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name}`);
-    if (!res.ok) throw new Error();
-    const data = await res.json();
-    enemies.push({ id: nextEnemyId++, data, level: lv });
-    enemyInput.value = '';
-    renderEnemyList();
-  } catch (_) {}
-  enemyAddBtn.disabled = enemies.length >= 5;
-  enemyAddBtn.textContent = 'Add';
-}
-
-function renderEnemyList() {
-  document.getElementById('enemy-count').textContent = `(${enemies.length}/5)`;
+function renderEnemyGroups() {
   updateStartFightBtn();
-  enemyAddBtn.disabled = enemies.length >= 5;
+  enemyGroupsList.innerHTML = enemyGroups.map(g => `
+    <div class="enemy-group-card party-card" data-gid="${g.id}">
+      <div class="party-trainer-header">
+        <input class="enemy-group-label-input" type="text"
+               value="${g.label.replace(/"/g, '&quot;')}" data-gid="${g.id}" />
+        <button class="enemy-group-delete party-remove-btn" data-gid="${g.id}" title="Remove enemy">&#10005;</button>
+      </div>
+      <div class="party-team-list">
+        ${g.team.map((t, pi) => t.data ? `
+          <div class="party-team-member">
+            <img class="party-team-sprite" src="${spriteUrl(t.data)}" alt="${t.data.name}" />
+            <div class="party-team-info">
+              <div class="party-pokemon-name">${cap(t.data.name)}</div>
+              <div class="types party-types">${typeBadges(t.data.types)}</div>
+              <div class="party-level-row">
+                <label class="level-bar-label">Lv</label>
+                <input class="enemy-group-lv party-level-input" type="number" min="1" max="99"
+                       value="${t.level}" data-gid="${g.id}" data-pi="${pi}" />
+              </div>
+            </div>
+            <button class="enemy-group-poke-remove party-remove-btn" data-gid="${g.id}" data-pi="${pi}" title="Remove">&#10005;</button>
+          </div>` : ''
+        ).join('')}
+      </div>
+      ${g.team.length < 6 ? `
+        <div class="party-add-row" data-gid="${g.id}">
+          <div class="party-add-wrap">
+            <input class="enemy-group-input party-add-input" type="text" placeholder="Add Pokémon…" autocomplete="off" />
+            <ul class="party-add-autocomplete"></ul>
+          </div>
+          <input class="enemy-group-add-level party-add-level" type="number" min="1" max="99" value="1" />
+          <button class="enemy-group-add-btn party-add-btn" data-gid="${g.id}">Add</button>
+        </div>` : ''}
+    </div>
+  `).join('');
 
-  enemyListEl.innerHTML = enemies.map(e => `
-    <div class="enemy-preview-card">
-      <img class="enemy-preview-sprite" src="${spriteUrl(e.data)}" alt="${e.data.name}" />
-      <span class="enemy-preview-name">${cap(e.data.name)}</span>
-      <label class="enemy-lv-label">Lv
-        <input type="number" class="enemy-lv-input" min="1" max="99" value="${e.level}" data-id="${e.id}" />
-      </label>
-      <button class="enemy-remove-btn" data-id="${e.id}" title="Remove">&#10005;</button>
-    </div>`).join('');
-
-  enemyListEl.querySelectorAll('.enemy-lv-input').forEach(inp => {
-    inp.addEventListener('input', () => {
-      const enemy = enemies.find(e => e.id === parseInt(inp.dataset.id, 10));
-      if (!enemy) return;
-      let lv = parseInt(inp.value, 10);
-      if (isNaN(lv) || lv < 1) lv = 1;
-      if (lv > 99) lv = 99;
-      enemy.level = lv;
-    });
-  });
-
-  enemyListEl.querySelectorAll('.enemy-remove-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      enemies = enemies.filter(e => e.id !== parseInt(btn.dataset.id, 10));
-      renderEnemyList();
-    });
+  enemyGroupsList.querySelectorAll('.party-add-row').forEach(row => {
+    const input = row.querySelector('.enemy-group-input');
+    const acEl  = row.querySelector('.party-add-autocomplete');
+    const wrap  = row.querySelector('.party-add-wrap');
+    if (input && acEl && wrap) makeAutocomplete(input, acEl, wrap, () => {});
   });
 }
+
+enemyGroupsList.addEventListener('input', e => {
+  if (e.target.matches('.enemy-group-label-input')) {
+    const gid = parseInt(e.target.dataset.gid, 10);
+    const g = enemyGroups.find(g => g.id === gid);
+    if (g) {
+      g.label = e.target.value;
+      clearTimeout(enemyDebounce);
+      enemyDebounce = setTimeout(saveEnemies, 800);
+    }
+    return;
+  }
+  if (e.target.matches('.enemy-group-lv')) {
+    const gid = parseInt(e.target.dataset.gid, 10);
+    const pi  = parseInt(e.target.dataset.pi, 10);
+    const g   = enemyGroups.find(g => g.id === gid);
+    if (!g) return;
+    let lv = parseInt(e.target.value, 10);
+    if (isNaN(lv) || lv < 1) lv = 1;
+    if (lv > 99) lv = 99;
+    g.team[pi].level = lv;
+    clearTimeout(enemyDebounce);
+    enemyDebounce = setTimeout(saveEnemies, 800);
+  }
+});
+
+enemyGroupsList.addEventListener('click', async e => {
+  const deleteGroupBtn  = e.target.closest('.enemy-group-delete');
+  const removePokeBtn   = e.target.closest('.enemy-group-poke-remove');
+  const addBtn          = e.target.closest('.enemy-group-add-btn');
+
+  if (deleteGroupBtn) {
+    const gid = parseInt(deleteGroupBtn.dataset.gid, 10);
+    enemyGroups = enemyGroups.filter(g => g.id !== gid);
+    renderEnemyGroups();
+    saveEnemies();
+    return;
+  }
+
+  if (removePokeBtn) {
+    const gid = parseInt(removePokeBtn.dataset.gid, 10);
+    const pi  = parseInt(removePokeBtn.dataset.pi, 10);
+    const g   = enemyGroups.find(g => g.id === gid);
+    if (g) { g.team.splice(pi, 1); renderEnemyGroups(); saveEnemies(); }
+    return;
+  }
+
+  if (addBtn) {
+    const gid = parseInt(addBtn.dataset.gid, 10);
+    const g   = enemyGroups.find(g => g.id === gid);
+    if (!g || g.team.length >= 6) return;
+    const row        = addBtn.closest('.party-add-row');
+    const input      = row.querySelector('.enemy-group-input');
+    const levelInput = row.querySelector('.enemy-group-add-level');
+    const name       = input.value.trim().toLowerCase();
+    if (!name) return;
+    let lv = parseInt(levelInput.value, 10);
+    if (isNaN(lv) || lv < 1) lv = 1;
+    if (lv > 99) lv = 99;
+    addBtn.disabled = true;
+    addBtn.textContent = '…';
+    try {
+      const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name}`);
+      if (!res.ok) throw new Error('Not found');
+      const data = await res.json();
+      g.team.push({ data, level: lv });
+      renderEnemyGroups();
+      saveEnemies();
+    } catch (_) {
+      addBtn.disabled = false;
+      addBtn.textContent = 'Add';
+    }
+  }
+});
 
 function updateStartFightBtn() {
-  startFightBtn.disabled = enemies.length === 0 || !partyLoaded;
+  const hasEnemies = enemyGroups.some(g => g.team.some(t => t.data));
+  startFightBtn.disabled = !hasEnemies || !partyLoaded;
 }
 
 // ── Fight Tab — Combat ───────────────────────────────────────────────────────
 
-const fightTracker      = document.getElementById('fight-tracker');
-const fightersList      = document.getElementById('fighters-list');
-const nextTurnBtn       = document.getElementById('next-turn-btn');
-const endFightBtn       = document.getElementById('end-fight-btn');
-const fightRoundEl      = document.getElementById('fight-round');
-const initiativeScreen  = document.getElementById('initiative-screen');
-const rollInitiativeBtn = document.getElementById('roll-initiative-btn');
-const toFightBtn        = document.getElementById('to-matchups-btn');  // repurposed
-const matchupScreen     = document.getElementById('matchup-screen');   // unused but kept in DOM
+const fightTracker       = document.getElementById('fight-tracker');
+const fightersList       = document.getElementById('fighters-list');
+const nextTurnBtn        = document.getElementById('next-turn-btn');
+const endFightBtn        = document.getElementById('end-fight-btn');
+const fightRoundEl       = document.getElementById('fight-round');
+const initiativeScreen   = document.getElementById('initiative-screen');
+const rollInitiativeBtn  = document.getElementById('roll-initiative-btn');
+const toMatchupsBtn      = document.getElementById('to-matchups-btn');
+const cancelFightBtn     = document.getElementById('cancel-fight-btn');
+const matchupScreen      = document.getElementById('matchup-screen');
+const confirmMatchupsBtn = document.getElementById('confirm-matchups-btn');
+const backToInitiativeBtn = document.getElementById('back-to-initiative-btn');
 
-startFightBtn.addEventListener('click',   startFight);
+startFightBtn.addEventListener('click',     startFight);
 rollInitiativeBtn.addEventListener('click', rollAllInitiative);
-toFightBtn.addEventListener('click',      confirmInitiativeAndFight);
-nextTurnBtn.addEventListener('click',     nextTurn);
-endFightBtn.addEventListener('click',     endFight);
+toMatchupsBtn.addEventListener('click',     confirmInitiativeAndGoToMatchups);
+cancelFightBtn.addEventListener('click',    cancelFight);
+backToInitiativeBtn.addEventListener('click', () => {
+  matchupScreen.style.display    = 'none';
+  initiativeScreen.style.display = 'block';
+});
+confirmMatchupsBtn.addEventListener('click', confirmMatchups);
+nextTurnBtn.addEventListener('click',       nextTurn);
+endFightBtn.addEventListener('click',       endFight);
 
-// Returns the active pokemon slot for any fighter (both have teams now)
+// Returns the active pokemon slot for any fighter
 function activePokemon(fighter) {
   return fighter.team[fighter.activeIdx];
 }
 
-// Build the enemy trainer from the setup pool
-function makeEnemyTrainer(enemiesList) {
+// Build one enemy fighter from an enemy group
+function makeEnemyGroupFighter(group) {
   return {
-    id: 'enemy-trainer',
+    id:       `enemy-${group.id}`,
     isPlayer: false,
-    label: 'Enemy Trainer',
+    label:    group.label,
+    groupId:  group.id,
     activeIdx: 0,
-    team: enemiesList.map(e => ({
-      data:      e.data,
-      level:     e.level,
-      maxHP:     calcHP(statVal(e.data, 'hp'), e.level),
-      currentHP: calcHP(statVal(e.data, 'hp'), e.level),
-      speed:     statVal(e.data, 'speed'),
+    team: group.team.filter(t => t.data).map(t => ({
+      data:      t.data,
+      level:     t.level,
+      maxHP:     calcHP(statVal(t.data, 'hp'), t.level),
+      currentHP: calcHP(statVal(t.data, 'hp'), t.level),
+      speed:     statVal(t.data, 'speed'),
       defeated:  false,
-      moves:     moveCache[e.data.name] || null,
+      moves:     moveCache[t.data.name] || null,
     })),
   };
 }
@@ -692,15 +963,28 @@ function makeTrainerFighter(trainer) {
 }
 
 function findFighterById(id) {
-  if (enemyTrainer && enemyTrainer.id === id) return enemyTrainer;
-  return partyFighters.find(f => f.id === id);
+  const ef = Object.values(enemyFighters).find(f => f.id === id);
+  return ef || partyFighters.find(f => f.id === id);
 }
 
 // ── Phase 1: Start → Initiative ──────────────────────────────────────────────
 
+function cancelFight() {
+  partyFighters = [];
+  enemyFighters = {};
+  matchups      = [];
+  fightRound    = 1;
+  saveFightActive(false);
+  initiativeScreen.style.display = 'none';
+  matchupScreen.style.display    = 'none';
+  fightTracker.style.display     = 'none';
+  document.getElementById('enemy-setup').style.display = 'flex';
+}
+
 function startFight() {
   partyFighters = party.filter(m => m.team.some(t => t.data)).map(makeTrainerFighter);
-  enemyTrainer  = makeEnemyTrainer(enemies);
+  enemyFighters = {};
+  matchups      = [];
   fightRound    = 1;
   goToInitiativePhase();
 }
@@ -743,15 +1027,76 @@ function rollAllInitiative() {
   });
 }
 
-// Read initiative values, sort, then go straight to fight
-function confirmInitiativeAndFight() {
+// ── Phase 2: Initiative → Matchups ───────────────────────────────────────────
+
+function confirmInitiativeAndGoToMatchups() {
   document.querySelectorAll('.init-input').forEach(inp => {
     partyFighters[parseInt(inp.dataset.pi, 10)].initiative = parseInt(inp.value, 10) || 0;
   });
   partyFighters.sort((a, b) => b.initiative - a.initiative);
   initiativeScreen.style.display = 'none';
-  fightTracker.style.display     = 'block';
+  matchupScreen.style.display    = 'block';
+  renderMatchupScreen();
+}
+
+function renderMatchupScreen() {
+  updateConfirmMatchupsBtn();
+  const assignList = document.getElementById('matchup-assignment-list');
+  assignList.innerHTML = partyFighters.map(pf => {
+    const ap         = activePokemon(pf);
+    const selectedId = matchups.find(m => m.partyFighterId === pf.id)?.enemyGroupId;
+    return `
+      <div class="matchup-assign-row" data-pfid="${pf.id}">
+        <div class="matchup-party-side">
+          <img class="matchup-party-sprite" src="${spriteUrl(ap.data)}" alt="${ap.data.name}" />
+          <div class="matchup-player-name">${pf.label}</div>
+          <div class="matchup-pokemon-name">${cap(ap.data.name)}</div>
+          <span class="matchup-init-chip">Init ${pf.initiative}</span>
+        </div>
+        <div class="matchup-enemy-grid">
+          ${enemyGroups.map(g => {
+            const lead = g.team.find(t => t.data);
+            if (!lead) return '';
+            const sel = selectedId === g.id;
+            return `
+              <div class="enemy-choice${sel ? ' selected' : ''}" data-pfid="${pf.id}" data-gid="${g.id}">
+                <img class="choice-sprite" src="${spriteUrl(lead.data)}" alt="${g.label}" />
+                <div class="choice-name">${g.label}</div>
+                <div class="choice-lv">Lv ${lead.level}${g.team.length > 1 ? ` +${g.team.length - 1}` : ''}</div>
+              </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+  }).join('');
+}
+
+document.getElementById('matchup-assignment-list').addEventListener('click', e => {
+  const choice = e.target.closest('.enemy-choice');
+  if (!choice) return;
+  const pfId = choice.dataset.pfid;
+  const gid  = parseInt(choice.dataset.gid, 10);
+  matchups = matchups.filter(m => m.partyFighterId !== pfId);
+  matchups.push({ partyFighterId: pfId, enemyGroupId: gid });
+  renderMatchupScreen();
+});
+
+function updateConfirmMatchupsBtn() {
+  const allAssigned = partyFighters.every(pf => matchups.some(m => m.partyFighterId === pf.id));
+  confirmMatchupsBtn.disabled = !allAssigned;
+}
+
+function confirmMatchups() {
+  const usedGroupIds = [...new Set(matchups.map(m => m.enemyGroupId))];
+  enemyFighters = {};
+  usedGroupIds.forEach(gid => {
+    const group = enemyGroups.find(g => g.id === gid);
+    if (group) enemyFighters[gid] = makeEnemyGroupFighter(group);
+  });
+  matchupScreen.style.display = 'none';
+  fightTracker.style.display  = 'block';
   renderFightTracker();
+  saveFightActive(true);
+  saveFighterHPs();
 }
 
 // ── Fight rendering ───────────────────────────────────────────────────────────
@@ -759,35 +1104,70 @@ function confirmInitiativeAndFight() {
 async function loadAllFighterMoves() {
   const toLoad = [];
   partyFighters.forEach(f => f.team.forEach(t => { if (!t.moves) toLoad.push(t); }));
-  if (enemyTrainer) enemyTrainer.team.forEach(t => { if (!t.moves) toLoad.push(t); });
+  Object.values(enemyFighters).forEach(f => f.team.forEach(t => { if (!t.moves) toLoad.push(t); }));
   if (!toLoad.length) return;
   await Promise.all(toLoad.map(async t => { t.moves = await fetchMoves(t.data); }));
-  renderFightTracker();
+  // Update move sections in-place to avoid full re-render flicker
+  partyFighters.forEach(pf => {
+    const mu   = matchups.find(m => m.partyFighterId === pf.id);
+    const ef   = mu ? enemyFighters[mu.enemyGroupId] : null;
+    const ap   = activePokemon(pf);
+    if (!ap.moves) return;
+    const opAP = ef ? activePokemon(ef) : null;
+    const opponentAC = opAP ? calcAC(statVal(opAP.data, 'defense'), opAP.level) : null;
+    const cardEl = document.querySelector(`.fighter-card[data-fighter-id="${pf.id}"]`);
+    if (!cardEl) return;
+    const content = cardEl.querySelector('.fighter-moves-content');
+    if (content) content.innerHTML = fightMovesTableHTML(
+      ap.moves.filter(m => m.gameLevel <= ap.level), ap.level, opponentAC, pf.id, opAP ? opAP.data.types : []
+    );
+  });
+  Object.values(enemyFighters).forEach(ef => {
+    const ap = activePokemon(ef);
+    if (!ap.moves) return;
+    partyFighters.forEach(pf => {
+      const mu = matchups.find(m => m.partyFighterId === pf.id && m.enemyGroupId === ef.groupId);
+      if (!mu) return;
+      const opAP = activePokemon(pf);
+      const opponentAC = calcAC(statVal(opAP.data, 'defense'), opAP.level);
+      const pairEl = document.querySelector(`.matchup-pair:has(.fighter-card[data-fighter-id="${pf.id}"])`);
+      if (!pairEl) return;
+      const enemyCard = pairEl.querySelector(`.fighter-card[data-fighter-id="${ef.id}"]`);
+      if (!enemyCard) return;
+      const content = enemyCard.querySelector('.fighter-moves-content');
+      if (content) content.innerHTML = fightMovesTableHTML(
+        ap.moves.filter(m => m.gameLevel <= ap.level), ap.level, opponentAC, ef.id, opAP.data.types
+      );
+    });
+  });
 }
 
 function renderFightTracker() {
   fightRoundEl.textContent = fightRound;
   renderOverview();
 
-  const et = enemyTrainer;
-  const etAP = activePokemon(et);
-
-  fightersList.innerHTML = `
-    <div class="enemy-panel">
-      <div class="enemy-panel-label">Enemy Trainer</div>
-      ${trainerCardHTML(et, null)}
-    </div>
-    <div class="party-fight-row">
-      ${partyFighters.map((pf, pi) => `
-        <div class="party-fight-wrapper">
-          <div class="party-fight-label">
-            <strong>${pf.label}</strong>
-            <span class="pair-init-chip">Init ${pf.initiative}</span>
-            <span class="party-fight-spd">Spd ${activePokemon(pf).speed} vs ${etAP.speed}</span>
-          </div>
-          ${trainerCardHTML(pf, et)}
-        </div>`).join('')}
-    </div>`;
+  fightersList.innerHTML = partyFighters.map(pf => {
+    const mu = matchups.find(m => m.partyFighterId === pf.id);
+    const ef = mu ? enemyFighters[mu.enemyGroupId] : null;
+    const pfAP = activePokemon(pf);
+    const efAP = ef ? activePokemon(ef) : null;
+    const spdNote = efAP
+      ? `Spd ${pfAP.speed} vs ${efAP.speed}`
+      : `Spd ${pfAP.speed}`;
+    return `
+      <div class="matchup-pair">
+        <div class="matchup-pair-header">
+          <strong>${pf.label}</strong>
+          <span class="pair-init-chip">Init ${pf.initiative}</span>
+          <span class="pair-spd-note">${spdNote}</span>
+          ${ef ? `<span class="pair-vs">vs</span><strong>${ef.label}</strong>` : ''}
+        </div>
+        <div class="matchup-pair-fighters">
+          ${trainerCardHTML(pf, ef)}
+          ${ef ? trainerCardHTML(ef, pf) : ''}
+        </div>
+      </div>`;
+  }).join('');
 
   loadAllFighterMoves();
 }
@@ -799,7 +1179,7 @@ function renderOverview() {
 
   const partyRows = partyFighters.map(pf => {
     const dots = pf.team.map((t, i) => {
-      const pct = t.currentHP / t.maxHP;
+      const pct   = t.currentHP / t.maxHP;
       const color = t.defeated ? '#2a2a3a' : pct > 0.5 ? '#78C850' : pct > 0.25 ? '#F8D030' : '#FF5959';
       return `<span class="party-ov-dot${i === pf.activeIdx ? ' ov-active' : ''}"
                     style="background:${color}"
@@ -808,19 +1188,19 @@ function renderOverview() {
     return `<div class="party-ov-trainer"><span class="party-ov-name">${pf.label}</span><div class="party-ov-dots">${dots}</div></div>`;
   }).join('');
 
-  let enemyRow = '';
-  if (enemyTrainer) {
-    const dots = enemyTrainer.team.map((t, i) => {
-      const pct = t.currentHP / t.maxHP;
+  const enemyRowsHTML = Object.values(enemyFighters).map(ef => {
+    const dots = ef.team.map((t, i) => {
+      const pct   = t.currentHP / t.maxHP;
       const color = t.defeated ? '#2a2a3a' : pct > 0.5 ? '#78C850' : pct > 0.25 ? '#F8D030' : '#FF5959';
-      return `<span class="party-ov-dot ov-enemy${i === enemyTrainer.activeIdx ? ' ov-active' : ''}"
+      return `<span class="party-ov-dot ov-enemy${i === ef.activeIdx ? ' ov-active' : ''}"
                     style="background:${color}"
                     title="${cap(t.data.name)}: ${t.currentHP}/${t.maxHP} HP"></span>`;
     }).join('');
-    enemyRow = `<div class="party-ov-divider"></div><div class="party-ov-trainer"><span class="party-ov-name ov-enemy-label">Enemies</span><div class="party-ov-dots">${dots}</div></div>`;
-  }
+    return `<div class="party-ov-trainer"><span class="party-ov-name ov-enemy-label">${ef.label}</span><div class="party-ov-dots">${dots}</div></div>`;
+  }).join('');
 
-  ovEl.innerHTML = partyRows + enemyRow;
+  const divider = enemyRowsHTML ? '<div class="party-ov-divider"></div>' : '';
+  ovEl.innerHTML = partyRows + divider + enemyRowsHTML;
 }
 
 // Unified card renderer for both party trainers and the enemy trainer
@@ -863,9 +1243,9 @@ function trainerCardHTML(fighter, opponent) {
       </div>`;
   }
 
-  // Moves section (party fighters attack the enemy; enemy moves shown without specific target)
+  // Moves section — both player and enemy use the same table when opponent is known
   let movesHTML = '';
-  if (fighter.isPlayer && opAP) {
+  if (opAP) {
     movesHTML = `
       <div class="fighter-moves-section">
         <button class="moves-toggle-btn" data-id="${fighter.id}">Moves &#9650;</button>
@@ -877,7 +1257,6 @@ function trainerCardHTML(fighter, opponent) {
         <div class="attack-result" data-fighter-id="${fighter.id}"></div>
       </div>`;
   } else if (!fighter.isPlayer) {
-    // Enemy card: show moves without a fixed opponent AC (DM picks target)
     movesHTML = `
       <div class="fighter-moves-section">
         <button class="moves-toggle-btn" data-id="${fighter.id}">Moves &#9650;</button>
@@ -992,6 +1371,7 @@ fightersList.addEventListener('click', async e => {
     const f = findFighterById(fighterId);
     if (!f || f.team[newIdx]?.defeated) return;
     f.activeIdx = newIdx;
+    saveFighterHPs();
     renderFightTracker();
     return;
   }
@@ -1083,17 +1463,21 @@ function updateFighterHPDisplay(id) {
   }
 
   renderOverview();
+  saveFighterHPs();
 }
 
 function nextTurn() {
   fightRound++;
+  saveFightRound();
   renderFightTracker();
 }
 
 function endFight() {
   partyFighters = [];
-  enemyTrainer  = null;
+  enemyFighters = {};
+  matchups      = [];
   fightRound    = 1;
+  saveFightActive(false);
   fightTracker.style.display     = 'none';
   initiativeScreen.style.display = 'none';
   matchupScreen.style.display    = 'none';
@@ -1103,3 +1487,4 @@ function endFight() {
 // ── Init ─────────────────────────────────────────────────────────────────────
 
 initParty();
+initFirebase();

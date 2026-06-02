@@ -574,132 +574,33 @@ body {
   margin-bottom: 0;
 }
 
-.enemy-add-row {
+#enemy-groups-list {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.enemy-search-wrap {
-  position: relative;
+.enemy-group-label-input {
   flex: 1;
-}
-
-.enemy-search-wrap input {
-  width: 100%;
-  padding: 10px 14px;
-  border: 2px solid #333;
-  border-radius: 8px;
-  background: #16213e;
-  color: #eee;
-  font-size: 0.95rem;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid #333;
+  color: #f7c948;
+  font-size: 1rem;
+  font-weight: 700;
+  padding: 2px 4px;
   outline: none;
+  min-width: 0;
   transition: border-color 0.2s;
 }
 
-.enemy-search-wrap input:focus { border-color: #f7c948; }
+.enemy-group-label-input:focus { border-color: #f7c948; }
 
-.lv-inline {
-  width: 60px;
-  padding: 10px 8px;
-  background: #16213e;
-  border: 2px solid #333;
-  border-radius: 8px;
-  color: #eee;
-  font-size: 0.95rem;
-  font-weight: 700;
-  text-align: center;
-  outline: none;
-  flex-shrink: 0;
+#add-enemy-group-btn {
+  align-self: center;
 }
-
-.lv-inline:focus { border-color: #f7c948; }
-
-#enemy-add-btn {
-  padding: 10px 18px;
-  background: #f7c948;
-  color: #1a1a2e;
-  border: none;
-  border-radius: 8px;
-  font-weight: 700;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: background 0.2s;
-}
-
-#enemy-add-btn:hover { background: #e5b83a; }
-#enemy-add-btn:disabled { background: #555; color: #888; cursor: not-allowed; }
-
-#enemy-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.enemy-preview-card {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: #16213e;
-  border-radius: 10px;
-  padding: 10px 14px;
-}
-
-.enemy-preview-sprite {
-  width: 44px;
-  height: 44px;
-  image-rendering: pixelated;
-  background: #0f3460;
-  border-radius: 50%;
-  padding: 2px;
-  flex-shrink: 0;
-}
-
-.enemy-preview-name {
-  flex: 1;
-  text-transform: capitalize;
-  font-weight: 600;
-}
-
-.enemy-lv-label {
-  font-size: 0.8rem;
-  color: #aaa;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.enemy-lv-input {
-  width: 52px;
-  padding: 4px 6px;
-  background: #0f3460;
-  border: 1px solid #333;
-  border-radius: 6px;
-  color: #eee;
-  font-size: 0.9rem;
-  text-align: center;
-  outline: none;
-}
-
-.enemy-lv-input:focus { border-color: #f7c948; }
-
-.enemy-remove-btn {
-  background: transparent;
-  border: none;
-  color: #666;
-  font-size: 1rem;
-  cursor: pointer;
-  padding: 4px 6px;
-  border-radius: 4px;
-  flex-shrink: 0;
-  transition: color 0.15s;
-}
-
-.enemy-remove-btn:hover { color: #ff6b6b; }
 
 #start-fight-btn {
-  margin-top: 8px;
   align-self: center;
   font-size: 1rem;
   padding: 12px 32px;
@@ -916,13 +817,10 @@ body {
 
 #fighters-list {
   display: flex;
-  flex-direction: row;
-  flex-wrap: nowrap;
+  flex-direction: column;
   gap: 20px;
-  align-items: flex-start;
-  overflow-x: auto;
+  align-items: stretch;
   padding-bottom: 16px;
-  scrollbar-color: #1e3a5f #12122a;
 }
 
 .fight-header {
@@ -967,6 +865,18 @@ body {
 }
 
 .matchup-pair-header strong { color: #eee; }
+
+.pair-spd-note {
+  font-size: 0.72rem;
+  color: #666;
+  margin-left: auto;
+}
+
+.pair-vs {
+  font-size: 0.75rem;
+  color: #555;
+  margin: 0 4px;
+}
 
 .pair-init-chip {
   font-size: 0.7rem;

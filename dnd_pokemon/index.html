@@ -77,19 +77,11 @@
 
     <section id="enemy-setup">
       <h1>Fight</h1>
-      <h2 class="section-title">Enemy Party <span id="enemy-count">(0/5)</span></h2>
+      <h2 class="section-title">Enemies</h2>
 
-      <div class="enemy-add-row">
-        <div class="enemy-search-wrap">
-          <input type="text" id="enemy-input" placeholder="Search Pokémon…" autocomplete="off" />
-          <ul id="enemy-autocomplete"></ul>
-        </div>
-        <input type="number" id="enemy-level-input" min="1" max="99" value="1" class="lv-inline" />
-        <button id="enemy-add-btn">Add</button>
-      </div>
+      <div id="enemy-groups-list"></div>
 
-      <div id="enemy-list"></div>
-
+      <button id="add-enemy-group-btn" class="btn-secondary">&#43; Add Enemy</button>
       <button id="start-fight-btn" class="btn-primary" disabled>&#9876; Start Fight</button>
     </section>
 
@@ -98,6 +90,7 @@
       <p class="subtitle">Determine the party's battle order</p>
       <div id="initiative-list"></div>
       <div class="fight-btn-row">
+        <button id="cancel-fight-btn" class="btn-secondary">&#10005; Cancel</button>
         <button id="roll-initiative-btn" class="btn-secondary">Roll All</button>
         <button id="to-matchups-btn" class="btn-primary">Set Matchups &#8594;</button>
       </div>
@@ -186,6 +179,10 @@ hit bonus = round(move_accuracy / divisor)</div>
     </div>
   </div>
 
+  <!-- Firebase SDK (compat mode — works with plain script tags) -->
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

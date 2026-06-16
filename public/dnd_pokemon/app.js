@@ -395,9 +395,11 @@ function powerToDieSize(power) {
   return die;
 }
 
-function calcDiceCount(level) { return 1 + Math.round(level / 10); }
+// Number of damage dice rolled (doubled from the original 1 + level/10).
+function calcDiceCount(level) { return 2 * (1 + Math.round(level / 10)); }
 
 function calcDamageDice(power, level, effectiveness) {
+  if (!power) return '—';            // status moves (e.g. Growl) deal no damage
   if (effectiveness === 0) return 'immune';
   const die = powerToDieSize(power);
   let count = calcDiceCount(level);
@@ -420,6 +422,37 @@ function effectivenessLabel(eff) {
 // ── Shared Utilities ─────────────────────────────────────────────────────────
 
 const moveCache = {};
+const moveInfoCache = {}; // slug → { name, type, power, accuracy, pp, shortEffect, effect, flavor }
+
+// Pull human-readable details out of a PokeAPI /move payload.
+function extractMoveInfo(d) {
+  const en   = d.effect_entries?.find(e => e.language.name === 'en');
+  const sub  = s => s ? s.replace(/\$effect_chance/g, d.effect_chance ?? '').trim() : '';
+  const flav = d.flavor_text_entries?.find(e => e.language.name === 'en')?.flavor_text;
+  return {
+    name:        d.name,
+    type:        d.type?.name ?? null,
+    power:       d.power ?? null,
+    accuracy:    d.accuracy ?? null,
+    pp:          d.pp ?? null,
+    shortEffect: sub(en?.short_effect),
+    effect:      sub(en?.effect),
+    flavor:      flav ? flav.replace(/[\n\f\r]+/g, ' ') : '',
+  };
+}
+
+// Get move details for the description popup (cached; fetched on demand if needed).
+async function getMoveInfo(slug) {
+  const key = slug.replace(/\s+/g, '-').toLowerCase();
+  if (moveInfoCache[key]) return moveInfoCache[key];
+  try {
+    const res = await fetch(`https://pokeapi.co/api/v2/move/${key}`);
+    if (!res.ok) return null;
+    const info = extractMoveInfo(await res.json());
+    moveInfoCache[key] = info;
+    return info;
+  } catch (_) { return null; }
+}
 
 async function fetchMoves(pokemonData) {
   if (moveCache[pokemonData.name]) return moveCache[pokemonData.name];
@@ -440,12 +473,16 @@ async function fetchMoves(pokemonData) {
     raw.map(m => fetch(`https://pokeapi.co/api/v2/move/${m.name}`).then(r => r.json()).catch(() => null))
   );
 
-  const moves = raw.map((m, i) => ({
-    ...m,
-    accuracy: details[i]?.accuracy ?? null,
-    power:    details[i]?.power    ?? null,
-    type:     details[i]?.type?.name ?? null,
-  }));
+  const moves = raw.map((m, i) => {
+    const d = details[i];
+    if (d) moveInfoCache[m.name] = extractMoveInfo(d); // pre-cache for the description popup
+    return {
+      ...m,
+      accuracy: d?.accuracy ?? null,
+      power:    d?.power    ?? null,
+      type:     d?.type?.name ?? null,
+    };
+  });
   moveCache[pokemonData.name] = moves;
   return moves;
 }
@@ -468,6 +505,61 @@ function typeBadges(types, small = false) {
   }).join('');
 }
 
+// A clickable move name that opens the description popup (used in every move table).
+function moveNameLink(slug) {
+  return `<button type="button" class="move-info-link" data-move="${slug}">${slug.replace(/-/g, ' ')}</button>`;
+}
+
+// ── Move description popup ─────────────────────────────────────────────────────
+
+let moveModalEl = null;
+
+function ensureMoveModal() {
+  if (moveModalEl) return moveModalEl;
+  moveModalEl = document.createElement('div');
+  moveModalEl.className = 'move-modal-overlay';
+  moveModalEl.style.display = 'none';
+  moveModalEl.innerHTML = `<div class="move-modal"><button type="button" class="move-modal-close" aria-label="Close">&times;</button><div class="move-modal-body"></div></div>`;
+  document.body.appendChild(moveModalEl);
+  moveModalEl.addEventListener('click', e => {
+    if (e.target === moveModalEl || e.target.closest('.move-modal-close')) hideMoveModal();
+  });
+  return moveModalEl;
+}
+
+function hideMoveModal() { if (moveModalEl) moveModalEl.style.display = 'none'; }
+
+async function showMoveDescription(slug) {
+  const el   = ensureMoveModal();
+  const body = el.querySelector('.move-modal-body');
+  const title = slug.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  body.innerHTML = `<h3 class="move-modal-name">${title}</h3><p class="moves-loading">Loading…</p>`;
+  el.style.display = 'flex';
+
+  const info = await getMoveInfo(slug);
+  if (el.style.display === 'none') return; // closed while loading
+  if (!info) { body.innerHTML = `<h3 class="move-modal-name">${title}</h3><p>Could not load move details.</p>`; return; }
+
+  const typeColor = TYPE_COLORS[info.type] || '#888';
+  const desc = info.shortEffect || info.effect || info.flavor || 'No description available.';
+  body.innerHTML = `
+    <h3 class="move-modal-name">${title}</h3>
+    <div class="move-modal-meta">
+      <span class="type-badge type-badge-sm" style="background:${typeColor};color:#fff">${info.type || '?'}</span>
+      <span>Power: ${info.power ?? '—'}</span>
+      <span>Acc: ${info.accuracy ?? '—'}</span>
+      ${info.pp != null ? `<span>PP: ${info.pp}</span>` : ''}
+    </div>
+    <p class="move-modal-desc">${desc}</p>`;
+}
+
+// Open the description popup whenever a move name is clicked, anywhere in the app.
+document.addEventListener('click', e => {
+  const link = e.target.closest('.move-info-link');
+  if (link) { e.preventDefault(); showMoveDescription(link.dataset.move); }
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') hideMoveModal(); });
+
 function movesTableHTML(moves, level) {
   if (!moves.length) return '<em class="moves-loading">No moves at this level.</em>';
   return `
@@ -476,7 +568,7 @@ function movesTableHTML(moves, level) {
       <tbody>${moves.map(m => `
         <tr>
           <td class="move-lv">${m.gameLevel}</td>
-          <td>${m.name.replace(/-/g, ' ')}</td>
+          <td>${moveNameLink(m.name)}</td>
           <td>${calcHitBonus(m.accuracy, level)}</td>
         </tr>`).join('')}
       </tbody>
@@ -492,7 +584,8 @@ function fightMovesTableHTML(moves, level, opponentAC, fighterId, opponentTypes)
       <tbody>${moves.map(m => {
         const eff = m.type ? calcEffectiveness(m.type, defTypes) : 1;
         const dice = calcDamageDice(m.power, level, eff);
-        const effClass = eff === 0 ? 'eff-immune' : eff >= 2 ? 'eff-super' : eff < 1 ? 'eff-weak' : '';
+        // Status moves (no power) deal no damage, so don't tint them by effectiveness.
+        const effClass = !m.power ? '' : eff === 0 ? 'eff-immune' : eff >= 2 ? 'eff-super' : eff < 1 ? 'eff-weak' : '';
         const typeColor = TYPE_COLORS[m.type] || '#888';
         return `
         <tr class="move-row${effClass ? ` ${effClass}` : ''}"
@@ -505,7 +598,7 @@ function fightMovesTableHTML(moves, level, opponentAC, fighterId, opponentTypes)
             data-move-power="${m.power ?? ''}"
             data-opponent-types="${defTypes.join(',')}">
           <td class="move-lv">${m.gameLevel}</td>
-          <td>${m.name.replace(/-/g, ' ')}</td>
+          <td>${moveNameLink(m.name)}</td>
           <td><span class="type-badge type-badge-sm" style="background:${typeColor};color:#fff">${m.type || '?'}</span></td>
           <td class="move-dmg ${effClass}">${dice}</td>
           <td>${calcHitBonus(m.accuracy, level)}</td>
@@ -1318,6 +1411,9 @@ function renderFightTracker() {
     const spdNote = efAP
       ? `Spd ${pfAP.speed} vs ${efAP.speed}`
       : `Spd ${pfAP.speed}`;
+    // Higher Speed attacks first; ties go to the party Pokémon.
+    const firstName = efAP ? (pfAP.speed >= efAP.speed ? cap(pfAP.data.name) : cap(efAP.data.name)) : '';
+    const firstNote = efAP ? `<span class="pair-first-note">&#9889; ${firstName} attacks first</span>` : '';
     return `
       <div class="matchup-pair">
         <div class="matchup-pair-header">
@@ -1325,6 +1421,7 @@ function renderFightTracker() {
           <span class="pair-init-chip">Init ${pf.initiative}</span>
           <span class="pair-spd-note">${spdNote}</span>
           ${ef ? `<span class="pair-vs">vs</span><strong>${ef.label}</strong>` : ''}
+          ${firstNote}
         </div>
         <div class="matchup-pair-fighters">
           ${trainerCardHTML(pf, ef)}
@@ -1377,9 +1474,13 @@ function trainerCardHTML(fighter, opponent) {
   const opAP       = opponent ? activePokemon(opponent) : null;
   const opponentAC = opAP ? calcAC(statVal(opAP.data, 'defense'), opAP.level) : null;
 
+  // Higher Speed attacks first; ties go to the party Pokémon.
+  const goesFirst = opAP ? (fighter.isPlayer ? ap.speed >= opAP.speed : ap.speed > opAP.speed) : false;
+
   const cls = ['fighter-card',
     fighter.isPlayer ? 'is-player' : 'is-enemy',
     ap.defeated ? 'defeated' : '',
+    goesFirst ? 'goes-first' : '',
   ].filter(Boolean).join(' ');
 
   // Team strip (shown when team has more than 1 member)
@@ -1435,6 +1536,7 @@ function trainerCardHTML(fighter, opponent) {
 
   return `
     <div class="${cls}" data-fighter-id="${fighter.id}">
+      ${goesFirst ? '<span class="first-badge" title="Higher Speed — attacks first">&#9889; 1st</span>' : ''}
       <div class="fighter-main">
         <img class="fighter-sprite" src="${spriteUrl(ap.data)}" alt="${ap.data.name}" />
         <div class="fighter-info">
@@ -1446,7 +1548,7 @@ function trainerCardHTML(fighter, opponent) {
           <span class="fighter-spd-label">AC</span>
           <span class="fighter-spd-val">${calcAC(statVal(ap.data, 'defense'), ap.level)}</span>
         </div>
-        <div class="fighter-spd">
+        <div class="fighter-spd${goesFirst ? ' spd-first' : ''}">
           <span class="fighter-spd-label">Spd</span>
           <span class="fighter-spd-val">${ap.speed}</span>
         </div>
@@ -1485,7 +1587,7 @@ function enemyMovesTableHTML(moves, level, fighterId) {
             data-move-name="${m.name.replace(/-/g, ' ')}"
             data-fighter-id="${fighterId}">
           <td class="move-lv">${m.gameLevel}</td>
-          <td>${m.name.replace(/-/g, ' ')}</td>
+          <td>${moveNameLink(m.name)}</td>
           <td><span class="type-badge type-badge-sm" style="background:${typeColor};color:#fff">${m.type || '?'}</span></td>
           <td>${calcHitBonus(m.accuracy, level)}</td>
         </tr>`;
@@ -1497,6 +1599,9 @@ function enemyMovesTableHTML(moves, level, fighterId) {
 // ── Event delegation ──────────────────────────────────────────────────────────
 
 fightersList.addEventListener('click', async e => {
+  // Clicking a move name opens its description (handled globally) — don't also roll.
+  if (e.target.closest('.move-info-link')) return;
+
   const dmgBtn     = e.target.closest('.hp-dmg');
   const healBtn    = e.target.closest('.hp-heal');
   const movBtn     = e.target.closest('.moves-toggle-btn');
@@ -1561,18 +1666,21 @@ fightersList.addEventListener('click', async e => {
     const effLabel = effectivenessLabel(eff);
     const effTag   = effLabel ? ` <span class="eff-label ${effLabel.cls}">${effLabel.text}</span>` : '';
 
+    const noDamage = !movePower;
+    const dmgNote  = noDamage ? 'no damage (status move).' : `Roll ${dice} for damage.`;
+
     let resultHTML;
     if (eff === 0) {
       resultHTML = `<strong>${moveName}</strong>: <span class="result-miss">It doesn't affect the opponent!</span>`;
     } else if (accuracy === null) {
       const bonus = Math.round(110 / accuracyDivisor(level));
-      resultHTML = `<strong>${moveName}</strong>: Always hits (+${bonus}). Roll ${dice} for damage.${effTag}`;
+      resultHTML = `<strong>${moveName}</strong>: Always hits (+${bonus}). ${dmgNote}${noDamage ? '' : effTag}`;
     } else {
       const bonus = Math.round(accuracy / accuracyDivisor(level));
       const roll  = Math.floor(Math.random() * 20) + 1;
       const total = roll + bonus;
       const hit   = total >= opponentAC;
-      resultHTML = `<strong>${moveName}</strong>: d20(${roll}) + ${bonus} = <strong>${total}</strong> vs AC ${opponentAC} → <span class="${hit ? 'result-hit' : 'result-miss'}">${hit ? `✓ HIT! Roll ${dice} for damage.` : '✗ MISS'}</span>${hit ? effTag : ''}`;
+      resultHTML = `<strong>${moveName}</strong>: d20(${roll}) + ${bonus} = <strong>${total}</strong> vs AC ${opponentAC} → <span class="${hit ? 'result-hit' : 'result-miss'}">${hit ? `✓ HIT! ${dmgNote}` : '✗ MISS'}</span>${hit && !noDamage ? effTag : ''}`;
     }
 
     const resultEl = document.querySelector(`.attack-result[data-fighter-id="${fighterId}"]`);

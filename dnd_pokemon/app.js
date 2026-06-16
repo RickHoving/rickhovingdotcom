@@ -39,23 +39,18 @@ const VALID_GAMES = [
   'ruby-sapphire', 'emerald', 'firered-leafgreen', 'colosseum', 'xd',
 ];
 
-// Each trainer has a team of up to 5 pokemon
+// Each trainer starts with an empty team — pokemon are added by players and
+// persisted to Firebase, so there are no hard-coded default pokemon.
 const PARTY_CONFIG = [
-  { player: 'Aban Donson', team: [{ pokemon: 'dratini',  level: 1 }] },
-  { player: 'Aavaa',       team: [{ pokemon: 'eevee',    level: 1 }] },
-  { player: 'Oar Phan',    team: [{ pokemon: 'houndour', level: 5 }] },
-  { player: 'Koen',        team: [{ pokemon: 'pikachu',  level: 1 }] },
-  { player: 'Nick',        team: [{ pokemon: 'pikachu',  level: 1 }] },
+  { player: 'Aban Donson', team: [] },
+  { player: 'Aavaa',       team: [] },
+  { player: 'Oar Phan',    team: [] },
+  { player: 'Koen',        team: [] },
+  { player: 'Nick',        team: [] },
 ];
 
-// Default enemies for testing
-const ENEMY_CONFIG = [
-  { pokemon: 'rattata',   level: 3 },
-  { pokemon: 'pidgey',    level: 3 },
-  { pokemon: 'caterpie',  level: 2 },
-  { pokemon: 'geodude',   level: 5 },
-  { pokemon: 'growlithe', level: 4 },
-];
+// Enemies are added per-fight in the setup screen (no defaults).
+const ENEMY_CONFIG = [];
 
 // ── Firebase Sync ─────────────────────────────────────────────────────────────
 // Replace these placeholder values with your Firebase project config.
@@ -74,6 +69,7 @@ let db               = null;
 let isApplyingRemote = false;
 let partyDebounce    = null;
 let enemyDebounce    = null;
+let lastSessionData  = null; // most recent Firestore snapshot (for late fight restore)
 
 function session() { return db?.collection('campaigns').doc('session'); }
 
@@ -81,7 +77,7 @@ function saveParty() {
   if (isApplyingRemote || !db) return;
   const data = party.map(t => ({
     player: t.player,
-    team:   t.team.map(m => ({ pokemon: m.pokemon, level: m.level })),
+    team:   t.team.map(m => ({ pokemon: m.pokemon, xp: m.xp ?? xpForLevel(m.level), level: m.level })),
   }));
   session().set({ party: data }, { merge: true }).catch(console.error);
 }
@@ -106,6 +102,18 @@ function saveFightActive(active) {
   session().set({ fightActive: active }, { merge: true }).catch(console.error);
 }
 
+// Persist everything needed to rebuild an in-progress fight for reloads / other
+// users: which fight is active, the round, the matchups, and the initiative order.
+function saveFightState() {
+  if (!db) return;
+  session().set({
+    fightActive: true,
+    fightRound,
+    matchups,
+    fightOrder: partyFighters.map(f => ({ id: f.id, initiative: f.initiative || 0 })),
+  }, { merge: true }).catch(console.error);
+}
+
 function saveFighterHPs() {
   if (isApplyingRemote || !db) return;
   const hps = {};
@@ -125,8 +133,12 @@ async function applyRemoteParty(remoteParty) {
     const local  = party[ti];
 
     remote.team.forEach((rt, pi) => {
-      if (local.team[pi] && local.team[pi].level !== rt.level) {
-        local.team[pi].level = rt.level;
+      if (!local.team[pi]) return;
+      const rxp = rt.xp ?? xpForLevel(rt.level);
+      const rlv = levelFromXp(rxp);
+      if (local.team[pi].xp !== rxp || local.team[pi].level !== rlv) {
+        local.team[pi].xp    = rxp;
+        local.team[pi].level = rlv;
         changed = true;
       }
     });
@@ -135,7 +147,8 @@ async function applyRemoteParty(remoteParty) {
       try {
         const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${remote.team[pi].pokemon}`);
         if (!res.ok) continue;
-        local.team.push({ pokemon: remote.team[pi].pokemon, level: remote.team[pi].level, data: await res.json() });
+        const xp = remote.team[pi].xp ?? xpForLevel(remote.team[pi].level);
+        local.team.push({ pokemon: remote.team[pi].pokemon, xp, level: levelFromXp(xp), data: await res.json() });
         changed = true;
       } catch (_) {}
     }
@@ -146,7 +159,16 @@ async function applyRemoteParty(remoteParty) {
       changed = true;
     }
   }
-  if (changed && document.getElementById('tab-party').classList.contains('active')) renderPartyTab();
+  if (changed && document.getElementById('tab-party').classList.contains('active') && !partyInputFocused()) {
+    renderPartyTab();
+  }
+}
+
+// True when the user is actively editing a field in the Party tab, so we can
+// avoid re-rendering it out from under them when remote/periodic updates arrive.
+function partyInputFocused() {
+  const el = document.activeElement;
+  return !!(el && el.closest && el.closest('#tab-party') && el.matches('input, textarea'));
 }
 
 async function applyRemoteEnemies(remoteData) {
@@ -214,20 +236,91 @@ function applyRemoteFighterHPs(hps) {
   });
 }
 
+// Rebuild an in-progress fight from persisted state and drop into the tracker.
+// Used on reload and when another user starts a fight while we're connected.
+function restoreFightFromRemote(data) {
+  if (!partyLoaded) return; // initParty() re-checks once the party has loaded
+
+  // Rebuild party fighters in the saved initiative order.
+  const built = party.filter(m => m.team.some(t => t.data)).map(makeTrainerFighter);
+  const byId  = new Map(built.map(f => [f.id, f]));
+  partyFighters = [];
+  (data.fightOrder || []).forEach(o => {
+    const f = byId.get(o.id);
+    if (f) { f.initiative = o.initiative || 0; partyFighters.push(f); byId.delete(o.id); }
+  });
+  byId.forEach(f => partyFighters.push(f)); // any members not in the saved order
+
+  // Matchups + the enemy fighters they reference.
+  matchups = (data.matchups || []).filter(m => partyFighters.some(pf => pf.id === m.partyFighterId));
+  enemyFighters = {};
+  [...new Set(matchups.map(m => m.enemyGroupId))].forEach(gid => {
+    const group = enemyGroups.find(g => g.id === gid);
+    if (group) enemyFighters[gid] = makeEnemyGroupFighter(group);
+  });
+
+  fightRound = data.fightRound ?? 1;
+
+  // Apply saved HP / active pokemon onto the rebuilt fighters before rendering.
+  if (data.fighterHPs) {
+    [...partyFighters, ...Object.values(enemyFighters)].forEach(f => {
+      const r = data.fighterHPs[f.id];
+      if (!r) return;
+      if (typeof r.activeIdx === 'number') f.activeIdx = Math.max(0, Math.min(r.activeIdx, f.team.length - 1));
+      (r.team || []).forEach((rt, i) => {
+        if (!f.team[i]) return;
+        f.team[i].currentHP = rt.currentHP;
+        f.team[i].defeated  = rt.defeated;
+      });
+    });
+  }
+
+  // Show the tracker and switch everyone to the Fight tab (also remembered in URL).
+  activateTab('fight');
+  if (location.hash.slice(1) !== 'fight') location.hash = 'fight';
+  document.getElementById('enemy-setup').style.display = 'none';
+  initiativeScreen.style.display = 'none';
+  matchupScreen.style.display    = 'none';
+  fightTracker.style.display     = 'block';
+  renderFightTracker();
+}
+
+// Reset the fight UI back to enemy setup without writing to Firebase.
+function teardownFightUI() {
+  partyFighters = [];
+  enemyFighters = {};
+  matchups      = [];
+  fightRound    = 1;
+  fightTracker.style.display     = 'none';
+  initiativeScreen.style.display = 'none';
+  matchupScreen.style.display    = 'none';
+  document.getElementById('enemy-setup').style.display = 'flex';
+}
+
 function listenToSession() {
   session().onSnapshot(async snap => {
     if (!snap.exists) return;
     const data = snap.data();
+    lastSessionData = data;
     isApplyingRemote = true;
     try {
       if (data.party)   await applyRemoteParty(data.party);
       if (data.enemies) await applyRemoteEnemies(data.enemies);
-      if (data.fightRound !== undefined && data.fightRound !== fightRound) {
-        fightRound = data.fightRound;
-        if (fightTracker.style.display !== 'none') fightRoundEl.textContent = fightRound;
-      }
-      if (data.fighterHPs && fightTracker.style.display !== 'none') {
-        applyRemoteFighterHPs(data.fighterHPs);
+
+      const trackerShown = fightTracker.style.display !== 'none';
+      if (data.fightActive === true && !trackerShown) {
+        // A fight is in progress (we just loaded, or another user started one).
+        restoreFightFromRemote(data);
+      } else if (data.fightActive === false && trackerShown) {
+        // The fight was ended elsewhere — return to setup.
+        teardownFightUI();
+      } else {
+        // Already in sync: apply incremental round / HP updates.
+        if (data.fightRound !== undefined && data.fightRound !== fightRound) {
+          fightRound = data.fightRound;
+          if (trackerShown) fightRoundEl.textContent = fightRound;
+        }
+        if (data.fighterHPs && trackerShown) applyRemoteFighterHPs(data.fighterHPs);
       }
     } finally {
       isApplyingRemote = false;
@@ -250,6 +343,18 @@ function initFirebase() {
 
 function calcHP(baseHp, level) { return baseHp + level * 2; }
 
+// ── Experience (Medium Fast growth group) ────────────────────────────────────
+// Total XP to reach level n is n^3, so level = ⌊∛(xp)⌋ (clamped 1–99).
+// https://bulbapedia.bulbagarden.net/wiki/Experience
+function xpForLevel(level) { return level ** 3; }
+
+function levelFromXp(xp) {
+  if (!xp || xp < 1) return 1;
+  // +1e-9 guards against floating-point cube-root undershoot (e.g. ∛27 → 2.9999…).
+  const lv = Math.floor(Math.cbrt(xp) + 1e-9);
+  return Math.max(1, Math.min(99, lv));
+}
+
 function calcMaxDef(baseDef) {
   return Math.floor(Math.floor(2 * baseDef + 99) * 1.1);
 }
@@ -268,6 +373,12 @@ function accuracyDivisor(level) {
 function calcHitBonus(accuracy, level) {
   if (accuracy === null) return `always hits (+${Math.round(110 / accuracyDivisor(level))})`;
   return `+${Math.round(accuracy / accuracyDivisor(level))}`;
+}
+
+// Base DC to catch a pokemon (at full HP). Roll d20 + bonuses vs this DC.
+// Lower capture_rate (rarer pokemon) → higher DC.
+function calcCatchDC(captureRate) {
+  return Math.round(30 - captureRate / 10);
 }
 
 function calcEffectiveness(moveType, defenderTypes) {
@@ -406,15 +517,29 @@ function fightMovesTableHTML(moves, level, opponentAC, fighterId, opponentTypes)
 
 // ── Tab Navigation ───────────────────────────────────────────────────────────
 
+const TAB_NAMES = ['pokedex', 'party', 'fight', 'rules'];
+
+function activateTab(tabName) {
+  if (!TAB_NAMES.includes(tabName)) return;
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tabName));
+  document.querySelectorAll('.tab-pane').forEach(p => p.classList.toggle('active', p.id === `tab-${tabName}`));
+  if (tabName === 'party') renderPartyTab();
+}
+
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b === btn));
-    document.querySelectorAll('.tab-pane').forEach(p =>
-      p.classList.toggle('active', p.id === `tab-${btn.dataset.tab}`)
-    );
-    if (btn.dataset.tab === 'party') renderPartyTab();
+    const tabName = btn.dataset.tab;
+    // Remember the open tab in the URL so reloads / shared links land here.
+    if (location.hash.slice(1) !== tabName) location.hash = tabName;
+    activateTab(tabName);
   });
 });
+
+// Keep the active tab in sync with the URL (reload, back/forward, shared links).
+// NOTE: the one-time restore from the URL on first load happens in the Init
+// section at the bottom — after the state `let`s below are initialized, since
+// activateTab('party') calls renderPartyTab() which reads them.
+window.addEventListener('hashchange', () => activateTab(location.hash.slice(1)));
 
 // ── Autocomplete factory ─────────────────────────────────────────────────────
 
@@ -469,7 +594,7 @@ let allNames = [];
 let party = PARTY_CONFIG.map(c => ({
   player: c.player,
   activeIdx: 0,
-  team: c.team.map(t => ({ pokemon: t.pokemon, level: t.level, data: null })),
+  team: c.team.map(t => ({ pokemon: t.pokemon, xp: xpForLevel(t.level), level: t.level, data: null })),
 }));
 let partyLoaded = false;
 
@@ -485,6 +610,7 @@ let fightRound    = 1;
 
 // Pokédex
 let currentPokemon = null;
+let currentSpecies = null; // species data (holds capture_rate for catch DC)
 let currentLevelMoves = [];
 
 // ── Preload Gen 1–3 Names ────────────────────────────────────────────────────
@@ -526,6 +652,15 @@ async function pokedexSearch() {
     if (!res.ok) throw new Error('Pokémon not found');
     const data = await res.json();
     currentPokemon = data;
+    currentSpecies = null;
+    // Species holds capture_rate (not on the pokemon endpoint) for the catch DC.
+    fetch(data.species.url)
+      .then(r => r.ok ? r.json() : null)
+      .then(species => {
+        currentSpecies = species;
+        if (currentPokemon === data) renderPokedexDndStats();
+      })
+      .catch(() => {});
     levelNum.value = 1;
     levelRange.value = 1;
     levelBar.style.display = 'flex';
@@ -572,11 +707,19 @@ function renderPokedexCard(p) {
 function renderPokedexDndStats() {
   if (!currentPokemon) return;
   const lv = getPokedexLevel();
+  const captureRate = currentSpecies?.capture_rate;
+  const catchCell = captureRate != null
+    ? `<div class="dnd-cell"><span class="dnd-label">Catch DC</span><span class="dnd-value">${calcCatchDC(captureRate)}</span></div>`
+    : '';
   document.getElementById('dnd-computed').innerHTML = `
     <div class="dnd-grid">
       <div class="dnd-cell"><span class="dnd-label">HP</span><span class="dnd-value">${calcHP(statVal(currentPokemon, 'hp'), lv)}</span></div>
       <div class="dnd-cell"><span class="dnd-label">AC</span><span class="dnd-value">${calcAC(statVal(currentPokemon, 'defense'), lv)}</span></div>
-    </div>`;
+      ${catchCell}
+    </div>
+    ${captureRate != null
+      ? '<p class="catch-note">Roll d20 + bonuses vs Catch DC. <strong>+1</strong> when target is at &le;50% HP, <strong>+2</strong> at &le;25% HP.</p>'
+      : ''}`;
 }
 
 function getPokedexLevel() {
@@ -635,6 +778,12 @@ async function initParty() {
   updateStartFightBtn();
   renderEnemyGroups();
   if (document.getElementById('tab-party').classList.contains('active')) renderPartyTab();
+
+  // If a fight was already in progress when we loaded, restore it now that the
+  // party (and any earlier snapshot) is available.
+  if (lastSessionData?.fightActive === true && fightTracker.style.display === 'none') {
+    restoreFightFromRemote(lastSessionData);
+  }
 }
 
 function renderPartyTab() {
@@ -658,9 +807,11 @@ function renderPartyTab() {
             <div class="types party-types">${typeBadges(t.data.types)}</div>
             <div class="party-team-stats"><span>HP ${hp}</span><span>AC ${ac}</span></div>
             <div class="party-level-row">
-              <label class="level-bar-label">Lv</label>
-              <input class="party-level-input" type="number" min="1" max="99" value="${t.level}"
+              <label class="level-bar-label">XP</label>
+              <input class="party-xp-input" type="number" min="0" step="any"
+                     value="${t.xp ?? xpForLevel(t.level)}"
                      data-ti="${ti}" data-pi="${pi}" />
+              <span class="party-level-derived">Lv ${t.level}</span>
             </div>
           </div>
           ${trainer.team.length > 1
@@ -700,13 +851,26 @@ function renderPartyTab() {
 const partyGrid = document.getElementById('party-grid');
 
 partyGrid.addEventListener('input', e => {
-  if (!e.target.matches('.party-level-input')) return;
+  if (!e.target.matches('.party-xp-input')) return;
   const ti = parseInt(e.target.dataset.ti, 10);
   const pi = parseInt(e.target.dataset.pi, 10);
-  let lv = parseInt(e.target.value, 10);
-  if (isNaN(lv) || lv < 1) lv = 1;
-  if (lv > 99) lv = 99;
-  party[ti].team[pi].level = lv;
+  let xp = parseFloat(e.target.value);
+  if (isNaN(xp) || xp < 0) xp = 0;
+  const member = party[ti].team[pi];
+  member.xp    = xp;
+  member.level = levelFromXp(xp);
+
+  // Update derived HP/AC/Lv in place so the XP field keeps focus while typing.
+  const memberEl = e.target.closest('.party-team-member');
+  if (memberEl && member.data) {
+    const hp = calcHP(statVal(member.data, 'hp'), member.level);
+    const ac = calcAC(statVal(member.data, 'defense'), member.level);
+    const statsEl = memberEl.querySelector('.party-team-stats');
+    if (statsEl) statsEl.innerHTML = `<span>HP ${hp}</span><span>AC ${ac}</span>`;
+    const lvEl = memberEl.querySelector('.party-level-derived');
+    if (lvEl) lvEl.textContent = `Lv ${member.level}`;
+  }
+
   clearTimeout(partyDebounce);
   partyDebounce = setTimeout(saveParty, 800);
 });
@@ -741,7 +905,7 @@ partyGrid.addEventListener('click', async e => {
       const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${name}`);
       if (!res.ok) throw new Error('Not found');
       const data = await res.json();
-      party[ti].team.push({ pokemon: name, level: lv, data });
+      party[ti].team.push({ pokemon: name, xp: xpForLevel(lv), level: lv, data });
       renderPartyTab();
       saveParty();
     } catch (_) {
@@ -1095,7 +1259,7 @@ function confirmMatchups() {
   matchupScreen.style.display = 'none';
   fightTracker.style.display  = 'block';
   renderFightTracker();
-  saveFightActive(true);
+  saveFightState();
   saveFighterHPs();
 }
 
@@ -1277,6 +1441,10 @@ function trainerCardHTML(fighter, opponent) {
           <div class="fighter-name">${ap.data.name.toUpperCase()}</div>
           <div class="fighter-label">${fighter.label} &middot; Lv ${ap.level}</div>
           <div class="fighter-types">${typeBadges(ap.data.types, true)}</div>
+        </div>
+        <div class="fighter-ac">
+          <span class="fighter-spd-label">AC</span>
+          <span class="fighter-spd-val">${calcAC(statVal(ap.data, 'defense'), ap.level)}</span>
         </div>
         <div class="fighter-spd">
           <span class="fighter-spd-label">Spd</span>
@@ -1473,18 +1641,38 @@ function nextTurn() {
 }
 
 function endFight() {
-  partyFighters = [];
-  enemyFighters = {};
-  matchups      = [];
-  fightRound    = 1;
+  teardownFightUI();
   saveFightActive(false);
-  fightTracker.style.display     = 'none';
-  initiativeScreen.style.display = 'none';
-  matchupScreen.style.display    = 'none';
-  document.getElementById('enemy-setup').style.display = 'flex';
 }
 
+// ── Live refresh ──────────────────────────────────────────────────────────────
+// Firestore's onSnapshot pushes changes in real time, but we also re-render the
+// active view on a short interval so the info stays current when several people
+// are editing the party / enemy setup at the same time. We never wipe the live
+// fight tracker (its HP syncs in place) and we skip re-renders while a field is
+// focused, so we don't interrupt anyone mid-edit.
+function refreshActiveView() {
+  if (isApplyingRemote) return;
+  const activePane = document.querySelector('.tab-pane.active');
+  if (!activePane) return;
+
+  if (activePane.id === 'tab-party') {
+    if (partyLoaded && !partyInputFocused()) renderPartyTab();
+  } else if (activePane.id === 'tab-fight') {
+    const inSetup = fightTracker.style.display === 'none' &&
+                    document.getElementById('enemy-setup').style.display !== 'none';
+    const el = document.activeElement;
+    const typingHere = el && el.matches && el.matches('input, textarea') && el.closest('#tab-fight');
+    if (inSetup && !typingHere) renderEnemyGroups();
+  }
+}
+
+setInterval(refreshActiveView, 5000);
+
 // ── Init ─────────────────────────────────────────────────────────────────────
+
+// Restore the open tab from the URL (now that all state above is initialized).
+if (TAB_NAMES.includes(location.hash.slice(1))) activateTab(location.hash.slice(1));
 
 initParty();
 initFirebase();

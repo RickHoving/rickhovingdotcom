@@ -414,6 +414,15 @@ body {
   color: #f7c948;
 }
 
+.catch-note {
+  margin-top: 10px;
+  font-size: 0.8rem;
+  color: #aaa;
+  line-height: 1.4;
+}
+
+.catch-note strong { color: #f7c948; }
+
 /* ── Moves Container (Pokédex) ────────────────────────────────────────────── */
 
 #moves-container {
@@ -557,6 +566,28 @@ body {
 }
 
 .party-level-input:focus { border-color: #f7c948; }
+
+.party-xp-input {
+  width: 90px;
+  padding: 6px 8px;
+  background: #0f3460;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #eee;
+  font-size: 0.95rem;
+  font-weight: 700;
+  text-align: center;
+  outline: none;
+}
+
+.party-xp-input:focus { border-color: #f7c948; }
+
+.party-level-derived {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: #f7c948;
+  white-space: nowrap;
+}
 
 /* ── Enemy Setup ──────────────────────────────────────────────────────────── */
 
@@ -973,13 +1004,16 @@ body {
   font-size: 0.65rem;
 }
 
-.fighter-spd {
+.fighter-spd,
+.fighter-ac {
   text-align: center;
   flex-shrink: 0;
   background: #0f3460;
   border-radius: 8px;
   padding: 6px 10px;
 }
+
+.fighter-ac .fighter-spd-val { color: #f7c948; }
 
 .fighter-spd-label {
   display: block;

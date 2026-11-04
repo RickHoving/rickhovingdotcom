@@ -41,8 +41,17 @@ function normalize(s) {
   for (const k of SECTIONS) out[k] = s[k] ?? structuredClone(SEED[k]);
   out.base = { ...structuredClone(SEED.base), ...out.base };
   out.crew = { ...structuredClone(SEED.crew), ...out.crew };
+  out.capes = out.capes.map(c => ({ ...c, classes: (c.classes || []).map(toClass) }));
   return out;
 }
+
+// Classes used to be plain strings ("Tinker"); now { name, rating }.
+function toClass(c) {
+  if (typeof c !== 'string') return { name: c.name, rating: c.rating ?? '' };
+  const [name, rating = ''] = c.split(' ');
+  return { name, rating };
+}
+const classLabel = c => c.rating ? `${c.name} ${c.rating}` : c.name;
 
 // ── Sync ──────────────────────────────────────────────────────────────────────
 function setSync(mode, text) {
@@ -96,6 +105,84 @@ function initFirebase() {
 // fields: [{ key, label, type: text|textarea|number|select|checkbox|date|tags, options }]
 let modalSubmit = null, modalDelete = null;
 
+// ── Cape pictures ─────────────────────────────────────────────────────────────
+// cape.image is one of:
+//   'https://…'         a pasted link
+//   'img:<capeId>:<ts>' an upload, stored in its own doc so the main doc stays small
+//   'data:image/…'      an upload made while offline
+const imgCache = {};
+const imgLoading = new Set();
+let imageDraft = '';   // value being edited in the form: string, or { data } for a new upload
+
+const imgDoc = capeId => firebase.firestore().collection(DOC_PATH[0]).doc(`${DOC_PATH[1]}-img-${capeId}`);
+
+function imageSrc(v) {
+  if (!v) return '';
+  if (typeof v === 'object') return v.data;
+  if (v.startsWith('img:')) return imgCache[v] || '';
+  if (/^(https?:|data:image\/)/.test(v)) return v;
+  return '';
+}
+
+// Fetch uploaded pictures we haven't loaded yet, then re-render.
+function loadImages() {
+  if (!docRef) return;
+  for (const c of state.capes) {
+    const key = c.image;
+    if (!key || !key.startsWith('img:') || key in imgCache || imgLoading.has(key)) continue;
+    imgLoading.add(key);
+    imgDoc(key.split(':')[1]).get()
+      .then(s => { imgCache[key] = s.data()?.data || ''; })
+      .catch(err => { console.error(err); imgCache[key] = ''; })
+      .finally(() => { imgLoading.delete(key); if (currentTab === 'capes') render(); });
+  }
+}
+
+// Shrink to max 480px so a picture is ~30–60 KB.
+function resizeImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const scale = Math.min(1, 480 / Math.max(img.width, img.height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(img.src);
+      resolve(canvas.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function wireImageField() {
+  const preview = () => {
+    const src = imageSrc(imageDraft);
+    $('#img-preview').innerHTML = src ? `<img src="${esc(src)}" alt="">` : '<span class="muted">No picture</span>';
+  };
+  $('#img-url').addEventListener('input', e => { imageDraft = e.target.value.trim(); preview(); });
+  $('#img-file').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try { imageDraft = { data: await resizeImage(file) }; $('#img-url').value = ''; preview(); }
+    catch { alert('Could not read that picture.'); }
+  });
+  $('#img-clear').addEventListener('click', () => { imageDraft = ''; $('#img-url').value = ''; preview(); });
+  preview();
+}
+
+// Turn a fresh upload ({ data }) into a stored picture.
+function storeImage(cape) {
+  if (!cape.image || typeof cape.image !== 'object') return;
+  const data = cape.image.data;
+  if (!docRef) { cape.image = data; return; }   // offline: keep it inline
+  const key = `img:${cape.id}:${Date.now()}`;
+  imgCache[key] = data;
+  cape.image = key;
+  imgDoc(cape.id).set({ data }).catch(err => { console.error(err); setSync('err', 'Picture not saved'); });
+}
+
 function openModal({ title, fields, values = {}, onSave, onDelete }) {
   $('#modal-title').textContent = title;
   $('#modal-fields').innerHTML = fields.map(f => {
@@ -110,14 +197,30 @@ function openModal({ title, fields, values = {}, onSave, onDelete }) {
       const [val, label] = Array.isArray(o) ? o : [o, o];
       return `<option value="${esc(val)}" ${val === v ? 'selected' : ''}>${esc(label)}</option>`;
     }).join('')}</select>`;
-    else if (f.type === 'tags') input = `<div class="chips pick" id="${id}">${f.options.map(o =>
-      `<button type="button" class="chip ${(v || []).includes(o) ? 'on' : ''}" data-val="${esc(o)}">${esc(o)}</button>`).join('')}</div>`;
+    else if (f.type === 'ratings') {
+      const have = Object.fromEntries((v || []).map(c => [c.name, c.rating || '?']));
+      input = `<div class="ratings" id="${id}">${f.options.map(o =>
+        `<label class="rating-row"><span>${esc(o)}</span><input data-cls="${esc(o)}" value="${esc(have[o] ?? '')}" placeholder="–" maxlength="4"></label>`).join('')}</div>
+        <small class="muted">Fill in a number for each class they have. Use ? if you don't know the number. Add + if it can grow.</small>`;
+    }
+    else if (f.type === 'image') {
+      imageDraft = v || '';
+      return `<div class="field"><span>${esc(f.label)}</span>
+        <div class="img-field">
+          <div class="img-preview" id="img-preview"></div>
+          <div class="img-controls">
+            <input id="img-url" type="url" placeholder="Paste an image link" value="${esc(/^https?:/.test(v || '') ? v : '')}">
+            <div class="img-buttons">
+              <label class="btn">Upload<input id="img-file" type="file" accept="image/*" hidden></label>
+              <button type="button" class="btn ghost" id="img-clear">Remove</button>
+            </div>
+          </div>
+        </div></div>`;
+    }
     else input = `<input id="${id}" type="${f.type || 'text'}" value="${esc(v)}" ${f.type === 'number' ? 'step="any"' : ''}>`;
     return `<label class="field"><span>${esc(f.label)}</span>${input}</label>`;
   }).join('');
-
-  $('#modal-fields').querySelectorAll('.chips.pick .chip').forEach(b =>
-    b.addEventListener('click', () => b.classList.toggle('on')));
+  if (fields.some(f => f.type === 'image')) wireImageField();
 
   modalSubmit = () => {
     const out = {};
@@ -125,7 +228,10 @@ function openModal({ title, fields, values = {}, onSave, onDelete }) {
       const el = document.getElementById('f-' + f.key);
       if (f.type === 'checkbox') out[f.key] = el.checked;
       else if (f.type === 'number') out[f.key] = Number(el.value) || 0;
-      else if (f.type === 'tags') out[f.key] = [...el.querySelectorAll('.chip.on')].map(c => c.dataset.val);
+      else if (f.type === 'ratings') out[f.key] = [...el.querySelectorAll('input')]
+        .filter(i => i.value.trim())
+        .map(i => ({ name: i.dataset.cls, rating: i.value.trim() === '?' ? '' : i.value.trim() }));
+      else if (f.type === 'image') out[f.key] = imageDraft;
       else out[f.key] = el.value.trim();
     }
     onSave(out);
@@ -150,6 +256,53 @@ $('#modal-delete').addEventListener('click', () => {
 $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
 document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
 
+// ── Info popup (class explanations) ──────────────────────────────────────────
+function showInfo(title, html) {
+  $('#info-title').textContent = title;
+  $('#info-body').innerHTML = html;
+  $('#info').hidden = false;
+  $('#info-close').focus();
+}
+function closeInfo() { $('#info').hidden = true; }
+$('#info-close').addEventListener('click', closeInfo);
+$('#info').addEventListener('click', e => {
+  if (e.target.id === 'info') closeInfo();
+  if (e.target.closest('[data-action="class-help"]')) showClassHelp();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#info').hidden) closeInfo(); });
+
+function ratingText(rating) {
+  const n = parseInt(rating, 10);
+  if (!n) return '';
+  const row = RATING_SCALE.find(([lo, hi]) => n >= lo && n <= hi);
+  return row ? row[2] : '';
+}
+
+function scaleTable() {
+  return `<dl class="facts wide scale">${RATING_SCALE.map(([lo, hi, d]) =>
+    `<dt>${hi > 9 ? lo + '+' : lo + '–' + hi}</dt><dd>${esc(d)}</dd>`).join('')}</dl>
+    <p class="muted">A <b>+</b> after the number means it can go up during a fight.</p>`;
+}
+
+function showClassInfo(name, rating) {
+  const c = PRT_CLASSES.find(x => x[0] === name);
+  if (!c) return;
+  const rt = ratingText(rating);
+  showInfo(rating ? `${name} ${rating}` : name, `
+    <p>${esc(c[2])}</p>
+    ${rating ? `<h3>Rating ${esc(rating)}</h3><p>${esc(rt || 'Unknown rating.')}</p>
+      ${rating.includes('+') ? '<p class="muted">The <b>+</b> means it gets worse the longer the fight goes.</p>' : ''}` : ''}
+    <p class="info-foot"><button class="linkish" data-action="class-help">See all classes</button></p>`);
+}
+
+function showClassHelp() {
+  showInfo('PRT classes', `
+    <p>The PRT sorts every cape into one or more classes. The number says how dangerous they are in that class.</p>
+    <dl class="facts wide">${PRT_CLASSES.map(([n, d]) => `<dt>${n}</dt><dd>${esc(d)}</dd>`).join('')}</dl>
+    <h3>The number</h3>${scaleTable()}
+    <p class="muted">Tap a class on a cape card for more detail.</p>`);
+}
+
 // Generic list editor: add/edit/delete an item in state[section] (or a nested array).
 function editItem({ title, list, item, fields, section, defaults = {} }) {
   const isNew = !item;
@@ -158,20 +311,30 @@ function editItem({ title, list, item, fields, section, defaults = {} }) {
     fields,
     values: item || defaults,
     onSave: vals => {
-      if (isNew) list.unshift({ id: uid(), ...defaults, ...vals });
-      else Object.assign(item, vals);
+      const oldImage = item?.image;
+      if (oldImage?.startsWith?.('img:') && 'image' in vals && vals.image !== oldImage && typeof vals.image !== 'object') {
+        imgDoc(item.id).delete().catch(console.error);   // picture removed or swapped for a link
+      }
+      const target = isNew ? { id: uid(), ...defaults, ...vals } : Object.assign(item, vals);
+      if (isNew) list.unshift(target);
+      if ('image' in vals) storeImage(target);
       save(section);
     },
-    onDelete: isNew ? null : () => { list.splice(list.indexOf(item), 1); save(section); },
+    onDelete: isNew ? null : () => {
+      list.splice(list.indexOf(item), 1);
+      if (item.image?.startsWith?.('img:')) imgDoc(item.id).delete().catch(console.error);
+      save(section);
+    },
   });
 }
 
 // ── Field definitions ─────────────────────────────────────────────────────────
 const CAPE_FIELDS = [
   { key: 'name', label: 'Cape name' },
+  { key: 'image', label: 'Picture', type: 'image' },
   { key: 'affiliation', label: 'Side / gang', type: 'select', options: AFFILIATIONS },
   { key: 'threat', label: 'Threat', type: 'select', options: THREATS.map(t => [t[0], `${t[1]}: ${t[2]}`]) },
-  { key: 'classes', label: 'PRT class', type: 'tags', options: PRT_CLASSES.map(c => c[0]) },
+  { key: 'classes', label: 'PRT classes and ratings', type: 'ratings', options: PRT_CLASSES.map(c => c[0]) },
   { key: 'look', label: 'What they look like', type: 'textarea', rows: 2 },
   { key: 'power', label: 'Power (what we know)', type: 'textarea', rows: 3 },
   { key: 'notes', label: 'Notes', type: 'textarea', rows: 4 },
@@ -222,13 +385,21 @@ const threatOf = id => THREATS.find(t => t[0] === id) || THREATS[4];
 const empty = text => `<p class="empty">${esc(text)}</p>`;
 const addBtn = (action, label) => `<button class="btn primary" data-action="${action}">+ ${esc(label)}</button>`;
 
+function portrait(c) {
+  const src = imageSrc(c.image);
+  if (src) return `<button class="portrait" data-action="view-image" data-id="${c.id}" aria-label="Bigger picture of ${esc(c.name)}"><img src="${esc(src)}" alt="" loading="lazy"></button>`;
+  const loading = c.image?.startsWith?.('img:') && !(c.image in imgCache);
+  return `<div class="portrait none ${loading ? 'loading' : ''}" aria-hidden="true">${esc((c.name.replace(/[^A-Za-z]/g, '')[0] || '?').toUpperCase())}</div>`;
+}
+
 function renderCapes() {
+  loadImages();
   const visible = state.capes.filter(c => gm || !c.hidden);
   const q = capeFilter.q.toLowerCase();
   const list = visible
-    .filter(c => !q || [c.name, c.look, c.power, c.notes, c.affiliation].join(' ').toLowerCase().includes(q))
+    .filter(c => !q || [c.name, c.look, c.power, c.notes, c.affiliation, ...c.classes.map(x => x.name)].join(' ').toLowerCase().includes(q))
     .filter(c => !capeFilter.aff || c.affiliation === capeFilter.aff)
-    .filter(c => !capeFilter.cls || (c.classes || []).includes(capeFilter.cls))
+    .filter(c => !capeFilter.cls || c.classes.some(x => x.name === capeFilter.cls))
     .filter(c => !capeFilter.met || c.met)
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -240,6 +411,7 @@ function renderCapes() {
       <select id="cape-aff"><option value="">All sides</option>${affs.map(a => `<option ${a === capeFilter.aff ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
       <select id="cape-cls"><option value="">All classes</option>${PRT_CLASSES.map(([c]) => `<option ${c === capeFilter.cls ? 'selected' : ''}>${c}</option>`).join('')}</select>
       <label class="toggle"><input type="checkbox" id="cape-met" ${capeFilter.met ? 'checked' : ''}> Met only</label>
+      <button class="btn help" data-action="class-help" aria-label="What do the classes mean?">?</button>
       ${addBtn('add-cape', 'Cape')}
     </div>
     <p class="count">${list.length} of ${visible.length} capes</p>
@@ -248,16 +420,22 @@ function renderCapes() {
         const t = threatOf(c.threat);
         return `
         <article class="card cape threat-${t[0]} ${c.hidden ? 'is-hidden' : ''}" data-action="edit-cape" data-id="${c.id}" tabindex="0">
-          <header>
-            <h3>${esc(c.name)}</h3>
-            <span class="threat">${esc(t[1])}</span>
-          </header>
-          <div class="meta">
-            <span class="aff">${esc(c.affiliation)}</span>
-            ${c.met ? '<span class="tag met">Met</span>' : ''}
-            ${c.hidden ? '<span class="tag gm">Hidden</span>' : ''}
+          <div class="cape-top">
+            ${portrait(c)}
+            <div class="cape-id">
+              <header>
+                <h3>${esc(c.name)}</h3>
+                <span class="threat">${esc(t[1])}</span>
+              </header>
+              <div class="meta">
+                <span class="aff">${esc(c.affiliation)}</span>
+                ${c.met ? '<span class="tag met">Met</span>' : ''}
+                ${c.hidden ? '<span class="tag gm">Hidden</span>' : ''}
+              </div>
+            </div>
           </div>
-          ${(c.classes || []).length ? `<div class="chips">${c.classes.map(x => `<span class="chip">${esc(x)}</span>`).join('')}</div>` : ''}
+          ${c.classes.length ? `<div class="chips">${c.classes.map(x =>
+            `<button class="chip info" data-action="class-info" data-cls="${esc(x.name)}" data-rating="${esc(x.rating)}" title="What does this mean?">${esc(classLabel(x))} <span class="q">?</span></button>`).join('')}</div>` : ''}
           ${c.look ? `<p><b>Look.</b> ${nl(c.look)}</p>` : ''}
           ${c.power ? `<p><b>Power.</b> ${nl(c.power)}</p>` : ''}
           ${c.notes ? `<p class="notes">${nl(c.notes)}</p>` : ''}
@@ -430,7 +608,8 @@ function renderRules() {
       <section class="panel">
         <h2>PRT classes</h2>
         <dl class="facts wide">${PRT_CLASSES.map(([n, d]) => `<dt>${n}</dt><dd>${esc(d)}</dd>`).join('')}</dl>
-        <p class="muted">A number after the class (Brute 4) says how careful you need to be. Higher is worse.</p>
+        <h3 class="mt">The number</h3>${scaleTable()}
+        <p><button class="linkish" data-action="class-help">More on each class</button></p>
       </section>
       <section class="panel">
         <h2>Threat levels</h2>
@@ -479,6 +658,9 @@ const ACTIONS = {
                                  defaults: { affiliation: 'Unknown', threat: 'unknown', classes: [], met: true, hidden: false } }),
   'edit-cape':  id => editItem({ title: 'cape', list: state.capes, item: find(state.capes, id), section: 'capes', fields: gm ? GM_CAPE_FIELDS : CAPE_FIELDS }),
   'reveal-cape': id => { find(state.capes, id).hidden = false; save('capes'); },
+  'view-image':  id => { const c = find(state.capes, id); showInfo(c.name, `<img class="big-portrait" src="${esc(imageSrc(c.image))}" alt="${esc(c.name)}">`); },
+  'class-info':  (_, el) => showClassInfo(el.dataset.cls, el.dataset.rating),
+  'class-help':  () => showClassHelp(),
 
   'add-member':  () => editItem({ title: 'member', list: state.crew.members, section: 'crew', fields: MEMBER_FIELDS }),
   'edit-member': id => editItem({ title: 'member', list: state.crew.members, item: find(state.crew.members, id), section: 'crew', fields: MEMBER_FIELDS }),

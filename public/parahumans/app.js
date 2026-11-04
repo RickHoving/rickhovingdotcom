@@ -625,9 +625,98 @@ function renderRules() {
     <p class="gm-link"><button class="linkish" data-action="toggle-gm">${gm ? 'Leave GM mode' : 'GM mode'}</button></p>`;
 }
 
-const RENDER = { capes: renderCapes, crew: renderCrew, base: renderBase, funds: renderFunds, jobs: renderJobs, contacts: renderContacts, log: renderLog, rules: renderRules };
+// ── Map (zoom and pan) ────────────────────────────────────────────────────────
+const MAP_SRC = 'img/brockton-bay.jpg';
+const MAP_W = 1920, MAP_H = 1829;
+let mapView = null;   // { s, x, y }; kept across tab switches
+
+function renderMap() {
+  return `
+    <div class="map-wrap">
+      <div class="map-view" id="map-view">
+        <img id="map-img" src="${MAP_SRC}" width="${MAP_W}" height="${MAP_H}" alt="Map of Brockton Bay" draggable="false">
+      </div>
+      <div class="map-controls">
+        <button class="btn" data-map="in" aria-label="Zoom in">+</button>
+        <button class="btn" data-map="out" aria-label="Zoom out">−</button>
+        <button class="btn" data-map="fit">Fit</button>
+      </div>
+      <p class="map-hint muted">Drag to move. Scroll, pinch or double-click to zoom.</p>
+    </div>`;
+}
+
+function initMap() {
+  const view = $('#map-view'), img = $('#map-img');
+  const fitScale = () => Math.min(view.clientWidth / MAP_W, view.clientHeight / MAP_H);
+  const minScale = () => fitScale() * 0.9;
+  const maxScale = 2.5;
+
+  const fit = () => {
+    const s = fitScale();
+    mapView = { s, x: (view.clientWidth - MAP_W * s) / 2, y: (view.clientHeight - MAP_H * s) / 2 };
+  };
+  const apply = () => { img.style.transform = `translate(${mapView.x}px, ${mapView.y}px) scale(${mapView.s})`; };
+  const zoomAt = (factor, cx, cy) => {
+    const s = Math.min(maxScale, Math.max(minScale(), mapView.s * factor));
+    const k = s / mapView.s;
+    mapView = { s, x: cx - (cx - mapView.x) * k, y: cy - (cy - mapView.y) * k };
+    apply();
+  };
+  const center = () => [view.clientWidth / 2, view.clientHeight / 2];
+  const local = e => { const r = view.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
+
+  if (!mapView) fit();
+  apply();
+
+  view.addEventListener('wheel', e => {
+    e.preventDefault();
+    zoomAt(Math.exp(-e.deltaY * 0.0015), ...local(e));
+  }, { passive: false });
+  view.addEventListener('dblclick', e => zoomAt(2, ...local(e)));
+
+  // One pointer pans; two pointers pinch.
+  const pts = new Map();
+  let last = null;
+  view.addEventListener('pointerdown', e => {
+    view.setPointerCapture(e.pointerId);
+    pts.set(e.pointerId, local(e));
+    last = null;
+  });
+  view.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, local(e));
+    const p = [...pts.values()];
+    if (p.length === 1) {
+      if (last) { mapView.x += p[0][0] - last.x; mapView.y += p[0][1] - last.y; apply(); }
+      last = { x: p[0][0], y: p[0][1] };
+    } else if (p.length === 2) {
+      const mx = (p[0][0] + p[1][0]) / 2, my = (p[0][1] + p[1][1]) / 2;
+      const d = Math.hypot(p[0][0] - p[1][0], p[0][1] - p[1][1]);
+      if (last?.d) {
+        mapView.x += mx - last.x; mapView.y += my - last.y;
+        zoomAt(d / last.d, mx, my);
+      }
+      last = { x: mx, y: my, d };
+    }
+  });
+  const up = e => { pts.delete(e.pointerId); last = null; };
+  view.addEventListener('pointerup', up);
+  view.addEventListener('pointercancel', up);
+
+  document.querySelector('.map-controls').addEventListener('click', e => {
+    const b = e.target.closest('[data-map]');
+    if (!b) return;
+    if (b.dataset.map === 'in') zoomAt(1.5, ...center());
+    if (b.dataset.map === 'out') zoomAt(1 / 1.5, ...center());
+    if (b.dataset.map === 'fit') { fit(); apply(); }
+  });
+}
+
+const RENDER = { capes: renderCapes, crew: renderCrew, base: renderBase, funds: renderFunds, jobs: renderJobs, contacts: renderContacts, map: renderMap, log: renderLog, rules: renderRules };
 
 function render() {
+  // The map has no synced data; don't rebuild it (and lose the view) on every update.
+  if (currentTab === 'map' && $('#map-view')) { $('#crew-title').textContent = state.crew.name || 'Brockton Bay'; return; }
   // Keep the search box focused while typing through a re-render.
   const focusId = document.activeElement?.id;
   const caret = document.activeElement?.selectionStart;
@@ -635,6 +724,8 @@ function render() {
   $('#crew-title').textContent = state.crew.name || 'Brockton Bay';
   document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === currentTab));
   $('#main').innerHTML = (RENDER[currentTab] || renderCapes)();
+  document.body.classList.toggle('on-map', currentTab === 'map');
+  if (currentTab === 'map') initMap();
   if (focusId) {
     const el = document.getElementById(focusId);
     if (el) { el.focus(); if (caret != null && el.setSelectionRange) try { el.setSelectionRange(caret, caret); } catch { /* type=number */ } }

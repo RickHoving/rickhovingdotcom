@@ -136,8 +136,28 @@ textarea { resize: vertical; }
   font: inherit; font-size: 0.85rem; padding: 3px 10px; border-radius: 999px;
   background: #23324a; color: #cfe0f7; border: 1px solid #34507a;
 }
-.chips.pick .chip { cursor: pointer; background: var(--bg); color: var(--muted); border-color: var(--line); }
-.chips.pick .chip.on { background: #23324a; color: #cfe0f7; border-color: var(--blue); }
+.chip.info { cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.chip.info:hover { border-color: var(--blue); background: #2b3e5c; }
+.chip .q {
+  display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
+  background: #34507a; color: #fff; font-size: 0.7rem; font-weight: 700;
+}
+.btn.help { width: 40px; padding: 8px 0; font-size: 1.05rem; }
+
+/* Class ratings in the cape form */
+.ratings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px 12px; }
+.rating-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.rating-row span { font-weight: 700; }
+.rating-row input { width: 56px; text-align: center; padding: 6px; }
+.field small { margin-top: 4px; }
+
+/* Info popup */
+.info-box h3 { margin: 16px 0 4px; color: var(--accent); }
+.info-box p { margin-top: 4px; }
+.info-box .facts { margin-top: 10px; }
+.info-head { margin: 0 0 6px; }
+.info-foot { margin-top: 16px; }
+.scale dt { white-space: nowrap; }
 
 /* Cape threat colors */
 .cape { border-left-width: 5px; }
@@ -250,6 +270,7 @@ textarea { resize: vertical; }
   .board { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 640px) {
+  .ratings { grid-template-columns: 1fr 1fr; }
   body { font-size: 16px; }
   .two-col, .meters, .board { grid-template-columns: 1fr; }
   .grid { grid-template-columns: 1fr; }
@@ -258,3 +279,29 @@ textarea { resize: vertical; }
   .toolbar select { flex: 1 1 45%; }
   .ledger th:nth-child(3), .ledger td:nth-child(3) { display: none; }
 }
+
+/* ── Cape pictures ───────────────────────────────────────────────────────── */
+.cape-top { display: flex; gap: 12px; align-items: flex-start; }
+.cape-id { flex: 1; min-width: 0; }
+.portrait {
+  flex: 0 0 72px; width: 72px; height: 72px; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--line); background: var(--bg); padding: 0; cursor: zoom-in;
+}
+.portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.portrait.none {
+  display: grid; place-items: center; cursor: inherit;
+  font-family: 'Oswald', sans-serif; font-size: 1.8rem; color: var(--muted);
+}
+.portrait.loading { animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: 0.5; } }
+.big-portrait { display: block; width: 100%; max-height: 70vh; object-fit: contain; border-radius: 10px; }
+
+.img-field { display: flex; gap: 12px; align-items: flex-start; }
+.img-preview {
+  flex: 0 0 96px; height: 96px; border-radius: 10px; border: 1px dashed var(--line);
+  display: grid; place-items: center; overflow: hidden; font-size: 0.8rem; text-align: center;
+}
+.img-preview img { width: 100%; height: 100%; object-fit: cover; }
+.img-controls { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.img-buttons { display: flex; gap: 8px; }
+.img-buttons label.btn { cursor: pointer; }

@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Parahumans: Crew Tracker</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=Oswald:wght@500;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <header class="top">
+    <div class="brand">
+      <span class="brand-mark">PRT</span>
+      <div>
+        <div class="brand-title" id="crew-title">Brockton Bay</div>
+        <div class="brand-sub">Crew tracker · Spring 2011</div>
+      </div>
+    </div>
+    <div class="sync" id="sync" title="Sync status"><span class="dot"></span><span id="sync-text">Connecting…</span></div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-tab="capes">Capes</button>
+    <button class="tab" data-tab="crew">Crew</button>
+    <button class="tab" data-tab="base">Base</button>
+    <button class="tab" data-tab="funds">Funds</button>
+    <button class="tab" data-tab="jobs">Jobs</button>
+    <button class="tab" data-tab="contacts">Contacts</button>
+    <button class="tab" data-tab="log">Log</button>
+    <button class="tab" data-tab="rules">Rules</button>
+  </nav>
+
+  <main id="main"></main>
+
+  <div class="modal-wrap" id="modal" hidden>
+    <form class="modal" id="modal-form" autocomplete="off">
+      <h2 id="modal-title"></h2>
+      <div id="modal-fields"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn danger" id="modal-delete" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn ghost" id="modal-cancel">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </div>
+
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

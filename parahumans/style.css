@@ -305,3 +305,16 @@ textarea { resize: vertical; }
 .img-controls { flex: 1; display: flex; flex-direction: column; gap: 8px; }
 .img-buttons { display: flex; gap: 8px; }
 .img-buttons label.btn { cursor: pointer; }
+
+/* ── Map ─────────────────────────────────────────────────────────────────── */
+.map-wrap { position: relative; }
+.map-view {
+  position: relative; overflow: hidden; height: calc(100vh - 190px); min-height: 360px;
+  background: #0d1b24; border: 1px solid var(--line); border-radius: var(--radius);
+  touch-action: none; cursor: grab; user-select: none;
+}
+.map-view:active { cursor: grabbing; }
+.map-view img { position: absolute; top: 0; left: 0; transform-origin: 0 0; max-width: none; pointer-events: none; }
+.map-controls { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; }
+.map-controls .btn { min-width: 44px; background: rgba(26, 29, 34, 0.9); }
+.map-hint { font-size: 0.85rem; margin-top: 8px; text-align: center; }

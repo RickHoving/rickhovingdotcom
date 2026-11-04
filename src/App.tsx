@@ -6,6 +6,7 @@ import WorkExperience from './components/WorkExperience';
 import ExperienceSummary from './components/ExperienceSummary';
 import ThemeSwitch from './components/ThemeSwitch';
 import DndPokemonPage from './components/DndPokemonPage';
+import ParahumansPage from './components/ParahumansPage';
 import styles from './App.module.scss';
 
 
@@ -17,6 +18,10 @@ function App() {
         <Route
           path="/dnd-pokemon"
           element={<DndPokemonPage />}
+        />
+        <Route
+          path="/parahumans"
+          element={<ParahumansPage />}
         />
         <Route
           path="*"

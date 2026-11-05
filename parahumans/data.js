@@ -126,7 +126,7 @@ const SEED = {
   ],
 
   contacts: [
-    { id: 'n1', name: 'Denny', role: 'Fixer (heard of)', where: 'Ask around the Docks', attitude: 'Unknown', notes: 'Same name keeps coming up: want a place nobody is using? Talk to Denny.' },
+    { id: 'n1', name: 'Denny', role: 'Fixer', where: 'Ask around the Docks', attitude: 'Unknown', met: false, notes: 'Same name keeps coming up: want a place nobody is using? Talk to Denny.' },
   ],
 
   log: [],

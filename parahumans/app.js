@@ -372,8 +372,12 @@ const LOG_FIELDS = [
   { key: 'text', label: 'What happened', type: 'textarea', rows: 10 },
 ];
 const UPGRADE_FIELDS = [
-  { key: 'name', label: 'Upgrade' }, { key: 'done', label: 'Built', type: 'checkbox' },
-  { key: 'notes', label: 'Notes', type: 'textarea' },
+  { key: 'name', label: 'Upgrade' },
+  { key: 'cost', label: 'Cost in cash' },
+  { key: 'scrap', label: 'Or scavenge instead' },
+  { key: 'days', label: 'Days of work' },
+  { key: 'done', label: 'Built', type: 'checkbox' },
+  { key: 'notes', label: 'What it does', type: 'textarea' },
 ];
 const STAFF_FIELDS = [
   { key: 'name', label: 'Name' }, { key: 'role', label: 'Job (medic, driver, lookout…)' },
@@ -481,6 +485,11 @@ function renderCrew() {
     </div>`;
 }
 
+const upgradeCost = u => [
+  [u.cost, u.scrap && `or ${u.scrap}`].filter(Boolean).join(' '),
+  u.days && `${u.days} ${u.days == 1 ? 'day' : 'days'} of work`,
+].filter(Boolean).join(' · ');
+
 function renderBase() {
   const b = state.base;
   return `
@@ -503,9 +512,11 @@ function renderBase() {
             <li class="${u.done ? 'done' : ''}">
               <button class="check-btn ${u.done ? 'on' : ''}" data-action="toggle-upgrade" data-id="${u.id}" aria-label="Toggle built">${u.done ? '✓' : ''}</button>
               <div class="grow" data-action="edit-upgrade" data-id="${u.id}">
-                <b>${esc(u.name)}</b>${u.notes ? `<div class="muted">${nl(u.notes)}</div>` : ''}
+                <b>${esc(u.name)}</b>
+                ${upgradeCost(u) ? `<div class="upg-cost">${esc(upgradeCost(u))}</div>` : ''}
+                ${u.notes ? `<div class="muted">${nl(u.notes)}</div>` : ''}
               </div>
-            </li>`).join('') || `<li>${empty('No upgrades yet.')}</li>`}
+            </li>`).join('') || `<li>${empty('No upgrades yet. Add your own ideas.')}</li>`}
         </ul>
       </section>
       <section>
@@ -556,7 +567,7 @@ function renderJobs() {
     <div class="row-between"><h2>Jobs</h2>${addBtn('add-job', 'Job')}</div>
     <div class="board">
       ${groups.map(g => `
-        <section class="column col-${g.key}">
+        <section class="column col-${g.key}" data-status="${g.key}">
           <h3>${g.label} <span class="muted">${g.items.length}</span></h3>
           ${g.items.map(j => `
             <article class="card job" data-action="edit-job" data-id="${j.id}" tabindex="0">
@@ -797,6 +808,86 @@ $('#main').addEventListener('keydown', e => {
   const el = e.target.closest('[data-action]');
   if (el) ACTIONS[el.dataset.action]?.(el.dataset.id, el);
 });
+
+// ── Job drag and drop ─────────────────────────────────────────────────────────
+// Mouse: drag once it moves a few pixels. Touch: hold still for 300 ms, then drag.
+let drag = null;
+let suppressClick = false;
+
+$('#main').addEventListener('pointerdown', e => {
+  const card = e.target.closest('.card.job');
+  if (!card || e.button !== 0) return;
+  drag = { card, id: card.dataset.id, x: e.clientX, y: e.clientY, pid: e.pointerId, touch: e.pointerType !== 'mouse', active: false };
+  if (drag.touch) drag.timer = setTimeout(() => { if (drag && !drag.active) startDrag(); }, 300);
+});
+window.addEventListener('pointermove', e => {
+  if (!drag || e.pointerId !== drag.pid) return;
+  if (!drag.active) {
+    if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+    if (drag.touch) { clearTimeout(drag.timer); drag = null; return; } // moved before the hold: it's a scroll
+    startDrag();
+  }
+  moveDrag(e.clientX, e.clientY);
+});
+window.addEventListener('touchmove', e => { if (drag?.active) e.preventDefault(); }, { passive: false });
+window.addEventListener('contextmenu', e => { if (drag) e.preventDefault(); });
+window.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.pid) endDrag(true); });
+window.addEventListener('pointercancel', () => { if (drag) endDrag(false); });
+// Dropping a card should not also open it.
+window.addEventListener('click', e => { if (suppressClick) { e.stopImmediatePropagation(); e.preventDefault(); } }, true);
+
+function startDrag() {
+  drag.active = true;
+  const r = drag.card.getBoundingClientRect();
+  drag.dx = drag.x - r.left;
+  drag.dy = drag.y - r.top;
+  drag.ghost = drag.card.cloneNode(true);
+  drag.ghost.classList.add('drag-ghost');
+  drag.ghost.style.width = r.width + 'px';
+  document.body.appendChild(drag.ghost);
+  drag.card.classList.add('dragging');
+  drag.marker = document.createElement('div');
+  drag.marker.className = 'drop-marker';
+  document.body.classList.add('is-dragging');
+  moveDrag(drag.x, drag.y);
+}
+
+function moveDrag(x, y) {
+  drag.ghost.style.transform = `translate(${x - drag.dx}px, ${y - drag.dy}px)`;
+  const col = document.elementFromPoint(x, y)?.closest('.column[data-status]');
+  document.querySelectorAll('.column.drop-on').forEach(c => { if (c !== col) c.classList.remove('drop-on'); });
+  drag.col = col || null;
+  if (!col) { drag.marker.remove(); return; }
+  col.classList.add('drop-on');
+  const before = [...col.querySelectorAll('.card.job:not(.dragging)')]
+    .find(c => { const r = c.getBoundingClientRect(); return y < r.top + r.height / 2; });
+  if (before) col.insertBefore(drag.marker, before); else col.appendChild(drag.marker);
+  drag.before = before?.dataset.id || null;
+  if (y < 60) window.scrollBy(0, -14);
+  else if (y > innerHeight - 60) window.scrollBy(0, 14);
+}
+
+function endDrag(drop) {
+  const d = drag;
+  drag = null;
+  clearTimeout(d.timer);
+  if (!d.active) return;
+  suppressClick = true;
+  setTimeout(() => { suppressClick = false; }, 0);
+  d.ghost.remove();
+  d.marker.remove();
+  d.card.classList.remove('dragging');
+  document.body.classList.remove('is-dragging');
+  document.querySelectorAll('.column.drop-on').forEach(c => c.classList.remove('drop-on'));
+  const job = find(state.jobs, d.id);
+  if (!drop || !d.col || !job) return;
+  job.status = d.col.dataset.status;
+  state.jobs.splice(state.jobs.indexOf(job), 1);
+  let at = d.before ? state.jobs.findIndex(j => j.id === d.before) : -1;
+  if (at < 0) at = state.jobs.map(j => j.status || 'lead').lastIndexOf(job.status) + 1;
+  state.jobs.splice(at, 0, job);
+  save('jobs');
+}
 
 $('#main').addEventListener('input', e => {
   if (e.target.id === 'cape-q') { capeFilter.q = e.target.value; render(); }

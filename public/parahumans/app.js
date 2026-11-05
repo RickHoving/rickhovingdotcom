@@ -21,6 +21,7 @@ let pendingRemote = null;   // remote update that arrived while a modal was open
 let currentTab = readStore('parahumans-tab') || 'capes';
 let gm = readStore('parahumans-gm') === '1' || new URLSearchParams(location.search).has('gm');
 const capeFilter = { q: '', aff: '', cls: '', met: false };
+const contactFilter = { q: '', att: '', known: '' };
 
 // ── Small helpers ─────────────────────────────────────────────────────────────
 const $ = sel => document.querySelector(sel);
@@ -359,6 +360,7 @@ const CONTACT_FIELDS = [
   { key: 'name', label: 'Name' }, { key: 'role', label: 'Who they are' },
   { key: 'where', label: 'Where to find them' },
   { key: 'attitude', label: 'Attitude to us', type: 'select', options: ATTITUDES },
+  { key: 'met', label: 'We have met them', type: 'checkbox' },
   { key: 'notes', label: 'Notes', type: 'textarea' },
 ];
 const LEDGER_FIELDS = [
@@ -580,16 +582,31 @@ function renderJobs() {
 }
 
 function renderContacts() {
+  const q = contactFilter.q.toLowerCase();
+  const list = state.contacts
+    .filter(n => !q || [n.name, n.role, n.where, n.notes].join(' ').toLowerCase().includes(q))
+    .filter(n => !contactFilter.att || n.attitude === contactFilter.att)
+    .filter(n => !contactFilter.known || (contactFilter.known === 'met') === !!n.met)
+    .sort((a, b) => (b.met ? 1 : 0) - (a.met ? 1 : 0) || a.name.localeCompare(b.name));
+  const atts = ATTITUDES.filter(a => state.contacts.some(n => n.attitude === a));
+  const opt = (val, label, cur) => `<option value="${val}" ${val === cur ? 'selected' : ''}>${label}</option>`;
+
   return `
-    <div class="row-between"><h2>Contacts</h2>${addBtn('add-contact', 'Contact')}</div>
+    <div class="toolbar">
+      <input class="search" id="contact-q" type="search" placeholder="Search contacts…" value="${esc(contactFilter.q)}">
+      <select id="contact-att">${opt('', 'Any attitude', contactFilter.att)}${atts.map(a => opt(a, a, contactFilter.att)).join('')}</select>
+      <select id="contact-known">${opt('', 'Met and heard of', contactFilter.known)}${opt('met', 'Met only', contactFilter.known)}${opt('heard', 'Heard of only', contactFilter.known)}</select>
+      ${addBtn('add-contact', 'Contact')}
+    </div>
+    <p class="count">${list.length} of ${state.contacts.length} contacts</p>
     <div class="grid">
-      ${state.contacts.map(n => `
-        <article class="card" data-action="edit-contact" data-id="${n.id}" tabindex="0">
+      ${list.map(n => `
+        <article class="card ${n.met ? '' : 'unmet'}" data-action="edit-contact" data-id="${n.id}" tabindex="0">
           <header><h3>${esc(n.name)}</h3><span class="tag att-${esc((n.attitude || '').toLowerCase())}">${esc(n.attitude)}</span></header>
-          ${n.role ? `<p><b>${esc(n.role)}</b></p>` : ''}
+          ${n.role ? `<p><b>${esc(n.role)}</b>${n.met ? '' : ' <span class="tag heard">Heard of</span>'}</p>` : (n.met ? '' : '<p><span class="tag heard">Heard of</span></p>')}
           ${n.where ? `<p class="muted">${esc(n.where)}</p>` : ''}
           ${n.notes ? `<p class="notes">${nl(n.notes)}</p>` : ''}
-        </article>`).join('') || empty('No contacts yet.')}
+        </article>`).join('') || empty(state.contacts.length ? 'Nobody matches.' : 'No contacts yet.')}
     </div>`;
 }
 
@@ -891,11 +908,14 @@ function endDrag(drop) {
 
 $('#main').addEventListener('input', e => {
   if (e.target.id === 'cape-q') { capeFilter.q = e.target.value; render(); }
+  if (e.target.id === 'contact-q') { contactFilter.q = e.target.value; render(); }
 });
 $('#main').addEventListener('change', e => {
   if (e.target.id === 'cape-aff') capeFilter.aff = e.target.value;
   else if (e.target.id === 'cape-cls') capeFilter.cls = e.target.value;
   else if (e.target.id === 'cape-met') capeFilter.met = e.target.checked;
+  else if (e.target.id === 'contact-att') contactFilter.att = e.target.value;
+  else if (e.target.id === 'contact-known') contactFilter.known = e.target.value;
   else return;
   render();
 });

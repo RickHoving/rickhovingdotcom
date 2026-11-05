@@ -330,3 +330,7 @@ body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
 .column.drop-on { outline: 2px dashed var(--muted); outline-offset: -2px; }
 .drop-marker { height: 4px; border-radius: 2px; background: var(--accent, #e0b84a); }
 .column { min-height: 120px; }
+
+/* Contacts: heard of, not met */
+.card.unmet { border-style: dashed; }
+.tag.heard { color: var(--muted); border-color: var(--line); font-weight: 400; }

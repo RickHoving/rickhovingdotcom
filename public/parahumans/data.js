@@ -52,6 +52,19 @@ const AFFILIATIONS = [
   'Merchants', 'Independent villain', 'Independent hero', 'Unknown',
 ];
 
+// A few simple upgrades so the crew gets the idea. They add their own.
+// Cost is cash, or things scavenged from the Trainyard. Days are downtime days for one person.
+const UPGRADES = [
+  { id: 'u-grate', days: '2', name: 'Seal the grate', cost: '$100', scrap: 'a steel plate and bolts', done: false,
+    notes: 'Block the broken grate in the middle tunnel. Storms stop flooding the den.' },
+  { id: 'u-pumps', days: '3', name: 'Pumps', cost: '$300', scrap: 'an old motor and hose', done: false,
+    notes: 'Pump the water out after a storm.' },
+  { id: 'u-power', days: '2', name: 'Power', cost: '$150', scrap: 'a long run of cable', done: false,
+    notes: 'Tap a line off the overpass lights. Light, a fridge, charging.' },
+  { id: 'u-beds', days: '3',  name: 'A dry room', cost: '$200', scrap: 'pallets and old train seats', done: false,
+    notes: 'Raised floor, cots, a table. Somewhere to actually sleep.' },
+];
+
 const SEED = {
   crew: {
     name: '',
@@ -98,16 +111,11 @@ const SEED = {
   ],
 
   base: {
-    name: '',
-    location: 'The Docks',
-    status: 'Looking',
+    name: 'The Underpass Den',
+    location: 'Under the Route 9 overpass, by the Trainyard. Hatch behind the green dumpster, third pillar from the fence.',
+    status: 'Claimed',
     notes: '',
-    upgrades: [
-      { id: 'u1', name: 'Defenses',    done: false, notes: 'Walls, traps, a real door, sightlines.' },
-      { id: 'u2', name: 'Workshop',    done: false, notes: 'Repair and build gear.' },
-      { id: 'u3', name: 'Holding cells', done: false, notes: '' },
-      { id: 'u4', name: 'A front',     done: false, notes: 'A legit cover business.' },
-    ],
+    upgrades: UPGRADES,
     staff: [],
   },
 

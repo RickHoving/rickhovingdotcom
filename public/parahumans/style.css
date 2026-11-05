@@ -318,3 +318,15 @@ textarea { resize: vertical; }
 .map-controls { position: absolute; top: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; }
 .map-controls .btn { min-width: 44px; background: rgba(26, 29, 34, 0.9); }
 .map-hint { font-size: 0.85rem; margin-top: 8px; text-align: center; }
+
+/* Upgrade cost */
+.upg-cost { color: var(--accent); font-size: 0.9rem; margin-top: 2px; }
+
+/* Job drag and drop */
+.card.job { cursor: grab; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.card.job.dragging { opacity: 0.35; }
+.drag-ghost { position: fixed; top: 0; left: 0; z-index: 50; pointer-events: none; cursor: grabbing; box-shadow: 0 10px 30px rgba(0,0,0,0.5); transform-origin: 0 0; }
+body.is-dragging, body.is-dragging * { cursor: grabbing !important; }
+.column.drop-on { outline: 2px dashed var(--muted); outline-offset: -2px; }
+.drop-marker { height: 4px; border-radius: 2px; background: var(--accent, #e0b84a); }
+.column { min-height: 120px; }

@@ -121,6 +121,8 @@ const SEED = {
 
   ledger: [],
 
+  assets: [],
+
   jobs: [
     { id: 'j1', title: 'Find a base', giver: '', reward: '', status: 'active', notes: 'Somewhere nobody uses, with no landlord asking questions.' },
   ],

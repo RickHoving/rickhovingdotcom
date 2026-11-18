@@ -13,7 +13,7 @@ const FIREBASE_CONFIG = {
 };
 const DOC_PATH = ['campaigns', 'parahumans'];
 const LOCAL_KEY = 'parahumans-state-v1';
-const SECTIONS = ['crew', 'capes', 'base', 'ledger', 'jobs', 'contacts', 'log'];
+const SECTIONS = ['crew', 'capes', 'base', 'ledger', 'assets', 'jobs', 'contacts', 'log'];
 
 let state = loadLocal() || structuredClone(SEED);
 let docRef = null;
@@ -381,6 +381,15 @@ const UPGRADE_FIELDS = [
   { key: 'done', label: 'Built', type: 'checkbox' },
   { key: 'notes', label: 'What it does', type: 'textarea' },
 ];
+const ASSET_KINDS = ['Vehicle', 'Weapon', 'Gear', 'Loot', 'Property', 'Other'];
+const ASSET_FIELDS = [
+  { key: 'name', label: 'What is it' },
+  { key: 'kind', label: 'Type', type: 'select', options: ASSET_KINDS },
+  { key: 'qty', label: 'How many', type: 'number' },
+  { key: 'holder', label: 'Who has it, or where is it' },
+  { key: 'value', label: 'Worth (if you sold it)' },
+  { key: 'notes', label: 'Notes', type: 'textarea' },
+];
 const STAFF_FIELDS = [
   { key: 'name', label: 'Name' }, { key: 'role', label: 'Job (medic, driver, lookout…)' },
   { key: 'pay', label: 'Pay' }, { key: 'notes', label: 'Notes', type: 'textarea' },
@@ -484,7 +493,56 @@ function renderCrew() {
           ${m.role ? `<p>${esc(m.role)}</p>` : ''}
           ${m.notes ? `<p class="notes">${nl(m.notes)}</p>` : ''}
         </article>`).join('') || empty('No members.')}
+    </div>
+    ${renderDice(c.members)}`;
+}
+
+// Nat 20 / nat 1 tally, one row per member.
+function renderDice(members) {
+  const best = Math.max(0, ...members.map(m => m.nat20 || 0));
+  const worst = Math.max(0, ...members.map(m => m.nat1 || 0));
+  const counter = (m, kind) => `
+    <div class="dice-count">
+      <button class="btn ghost" data-action="nat-down" data-id="${m.id}" data-kind="${kind}" aria-label="Remove a ${kind === 'nat20' ? 'nat 20' : 'nat 1'} for ${esc(m.name)}">−</button>
+      <span class="dice-num">${m[kind] || 0}</span>
+      <button class="btn" data-action="nat-up" data-id="${m.id}" data-kind="${kind}" aria-label="Add a ${kind === 'nat20' ? 'nat 20' : 'nat 1'} for ${esc(m.name)}">+</button>
     </div>`;
+  return `
+    <section class="panel">
+      <h2>Dice</h2>
+      <div class="dice">
+        <div class="dice-row dice-head"><span>Player</span><span class="d20">Nat 20</span><span class="d1">Nat 1</span></div>
+        ${members.map(m => `
+          <div class="dice-row">
+            <span><b>${esc(m.player || m.name)}</b>
+              ${best && (m.nat20 || 0) === best ? '<span class="tag d20">Lucky</span>' : ''}
+              ${worst && (m.nat1 || 0) === worst ? '<span class="tag d1">Cursed</span>' : ''}
+              <div class="muted">${esc(m.name)}</div></span>
+            ${counter(m, 'nat20')}
+            ${counter(m, 'nat1')}
+          </div>`).join('')}
+      </div>
+    </section>`;
+}
+
+function renderAssets() {
+  const groups = [...ASSET_KINDS, ''].map(k => ({
+    kind: k || 'Other',
+    items: state.assets.filter(a => k ? a.kind === k : !ASSET_KINDS.includes(a.kind)),
+  })).filter(g => g.items.length);
+  return `
+    <div class="row-between"><h2>Party assets</h2>${addBtn('add-asset', 'Asset')}</div>
+    <p class="count">Everything the crew owns that isn't cash. Cash goes in Funds.</p>
+    ${groups.map(g => `
+      <h3 class="group-head">${esc(g.kind)} <span class="muted">${g.items.length}</span></h3>
+      <div class="grid">
+        ${g.items.map(a => `
+          <article class="card" data-action="edit-asset" data-id="${a.id}" tabindex="0">
+            <header><h3>${esc(a.name)}${Number(a.qty) > 1 ? ` <span class="muted">×${esc(a.qty)}</span>` : ''}</h3>${a.value ? `<span class="tag reward">${esc(a.value)}</span>` : ''}</header>
+            ${a.holder ? `<p class="muted">${esc(a.holder)}</p>` : ''}
+            ${a.notes ? `<p class="notes">${nl(a.notes)}</p>` : ''}
+          </article>`).join('')}
+      </div>`).join('') || empty('Nothing yet. Add what you find, steal or buy.')}`;
 }
 
 const upgradeCost = u => [
@@ -740,7 +798,7 @@ function initMap() {
   });
 }
 
-const RENDER = { capes: renderCapes, crew: renderCrew, base: renderBase, funds: renderFunds, jobs: renderJobs, contacts: renderContacts, map: renderMap, log: renderLog, rules: renderRules };
+const RENDER = { capes: renderCapes, crew: renderCrew, base: renderBase, funds: renderFunds, assets: renderAssets, jobs: renderJobs, contacts: renderContacts, map: renderMap, log: renderLog, rules: renderRules };
 
 function render() {
   // The map has no synced data; don't rebuild it (and lose the view) on every update.
@@ -805,6 +863,10 @@ const ACTIONS = {
   'add-job':  () => editItem({ title: 'job', list: state.jobs, section: 'jobs', fields: JOB_FIELDS, defaults: { status: 'lead' } }),
   'edit-job': id => editItem({ title: 'job', list: state.jobs, item: find(state.jobs, id), section: 'jobs', fields: JOB_FIELDS }),
 
+  'add-asset':  () => editItem({ title: 'asset', list: state.assets, section: 'assets', fields: ASSET_FIELDS, defaults: { kind: 'Gear', qty: 1 } }),
+  'edit-asset': id => editItem({ title: 'asset', list: state.assets, item: find(state.assets, id), section: 'assets', fields: ASSET_FIELDS }),
+  'nat-up':   (id, el) => { const m = find(state.crew.members, id); m[el.dataset.kind] = (m[el.dataset.kind] || 0) + 1; save('crew'); },
+  'nat-down': (id, el) => { const m = find(state.crew.members, id); m[el.dataset.kind] = Math.max(0, (m[el.dataset.kind] || 0) - 1); save('crew'); },
   'add-contact':  () => editItem({ title: 'contact', list: state.contacts, section: 'contacts', fields: CONTACT_FIELDS, defaults: { attitude: 'Neutral' } }),
   'edit-contact': id => editItem({ title: 'contact', list: state.contacts, item: find(state.contacts, id), section: 'contacts', fields: CONTACT_FIELDS }),
 
